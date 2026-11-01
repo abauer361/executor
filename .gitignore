@@ -1,5 +1,102 @@
-node_modules
-out
-dist
-.DS_Store
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/
+.pnpm-store/
+
+# Build output
+# build/ is not listed because it holds the app icon source.
+/out/
+/dist/
+/release/
+*.tsbuildinfo
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.enc
+credentials.json
+secrets.json
+
+# Apple signing and notarization
+*.p8
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+electron-builder.env
+
+# Local app data copied out of Application Support
+/state.json
+/library/
+
+# Caches
+.cache/
+.vite/
+.eslintcache
+.stylelintcache
+.npm/
+
+# Test output
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+*.lcov
+
+# Logs
+logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# Editors
+.idea/
+.history/
+*.swp
+*.swo
+*.sublime-workspace
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
+
+# Claude Code personal settings
+.claude/settings.local.json
+.claude/worktrees/

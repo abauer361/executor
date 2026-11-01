@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { bridge } from './bridge'
 import { Header, Rail } from './components/Shell'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
+import { SettingsDialog } from './components/SettingsDialog'
 import { BuilderPage } from './pages/BuilderPage'
 import { CanvasPage } from './pages/canvas/CanvasPage'
 import { MarketplacePage } from './pages/MarketplacePage'
@@ -20,10 +21,7 @@ export function App() {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
-  useEffect(() => {
-    const timer = setInterval(() => useApp.getState().tick(), 1000)
-    return () => clearInterval(timer)
-  }, [])
+  useEffect(() => bridge.onRunEvent((event) => useApp.getState().applyRunEvent(event)), [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -55,6 +53,7 @@ export function App() {
         {page === 'marketplace' && <MarketplacePage />}
       </main>
       <ProjectSwitcher />
+      <SettingsDialog />
     </div>
   )
 }

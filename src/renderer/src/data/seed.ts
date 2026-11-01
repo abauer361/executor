@@ -1,4 +1,5 @@
 import type { Agent, AgentStatus, LogEntry, Project, Workflow, WorkflowNode } from '../../../shared/types'
+import { sampleCost } from '../usage'
 
 const MINUTE = 60_000
 const DEFAULT_MODELS = ['claude-sonnet-5-5', 'gpt-4o', 'gemini-2-0-flash']
@@ -110,7 +111,7 @@ const node = (
   id,
   type: 'agent',
   position: { x, y },
-  data: { agentId, status, task, tokensUsed, activeModel: DEFAULT_MODELS[0] }
+  data: { agentId, status, task, tokensUsed, costUsed: sampleCost(tokensUsed), activeModel: DEFAULT_MODELS[0] }
 })
 
 const edge = (source: string, target: string) => ({ id: `${source}-${target}`, source, target })
@@ -129,7 +130,8 @@ function chain(id: string, steps: ChainStep[], lastRunAt: number | null, note?: 
     running: false,
     lastRunAt,
     note,
-    log: []
+    log: [],
+    sample: nodes.length > 0
   }
 }
 
@@ -167,7 +169,8 @@ function sweFleet(now: number): Workflow {
     ],
     running: false,
     lastRunAt: now - 2 * MINUTE,
-    log: seedLog('backend')
+    log: seedLog('backend'),
+    sample: true
   }
 }
 

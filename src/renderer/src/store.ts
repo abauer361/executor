@@ -5,7 +5,9 @@ import type {
   AgentTemplate,
   CatalogPackage,
   DownloadRecord,
+  KeyResult,
   Project,
+  RunEvent,
   Workflow,
   WorkflowEdge,
   WorkflowNode
@@ -13,7 +15,8 @@ import type {
 import { bridge } from './bridge'
 import { packageById, PREINSTALLED } from './data/catalog'
 import { createSeed } from './data/seed'
-import { logEntry, startRun, stopRun, tickWorkflow } from './sim'
+import { buildRunRequest, prepareRun, reduceRunEvent } from './runState'
+import { appendLog, logEntry, sampleCost } from './usage'
 
 export type Page = 'canvas' | 'builder' | 'marketplace'
 export type BuilderSection = 'prompt' | 'mcp' | 'skills' | 'memory'
@@ -34,20 +37,25 @@ interface Persisted {
 
 interface AppState extends Persisted {
   hydrated: boolean
+  hasApiKey: boolean
   page: Page
   drawerTab: 'workflows' | 'agents'
   drawerOpen: boolean
   inspectorOpen: boolean
   logsOpen: boolean
   switcherOpen: boolean
+  settingsOpen: boolean
+  runPanelOpen: boolean
   creatingWorkflow: boolean
   builderDraft: Agent | null
   builderSection: BuilderSection | null
 
   hydrate(): Promise<void>
   setPage(page: Page): void
-  setUi(patch: Partial<Pick<AppState, 'drawerTab' | 'drawerOpen' | 'inspectorOpen' | 'logsOpen' | 'switcherOpen' | 'creatingWorkflow' | 'builderSection'>>): void
+  setUi(patch: Partial<Pick<AppState, 'drawerTab' | 'drawerOpen' | 'inspectorOpen' | 'logsOpen' | 'switcherOpen' | 'settingsOpen' | 'runPanelOpen' | 'creatingWorkflow' | 'builderSection'>>): void
   setTheme(theme: Theme): void
+  saveApiKey(key: string): Promise<KeyResult>
+  removeApiKey(): Promise<void>
 
   selectProject(id: string): void
   addProject(name: string): void
@@ -59,11 +67,11 @@ interface AppState extends Persisted {
   connect(connection: Connection): void
   addAgentNode(agentId: string, position: { x: number; y: number }): void
   autoLayout(): void
-  toggleRun(): void
-  tick(): void
+  beginRun(goal: string): void
+  stopRun(): void
+  applyRunEvent(event: RunEvent): void
   inject(nodeId: string, text: string): void
   setNodeModel(nodeId: string, model: string): void
-  togglePause(nodeId: string): void
 
   openBuilder(agentId: string, section?: BuilderSection): void
   updateDraft(patch: Partial<Agent>): void
@@ -109,7 +117,35 @@ function createNode(agent: Agent, position: { x: number; y: number }): WorkflowN
     id: uid('node'),
     type: 'agent',
     position,
-    data: { agentId: agent.id, status: 'idle', task: 'Ready', tokensUsed: 0, activeModel: agent.models[0] ?? '' }
+    data: {
+      agentId: agent.id,
+      status: 'idle',
+      task: 'Ready',
+      tokensUsed: 0,
+      costUsed: 0,
+      activeModel: agent.models[0] ?? ''
+    }
+  }
+}
+
+// A run cannot survive a restart, and state saved by older versions has no cost field.
+function restoreWorkflow(workflow: Workflow): Workflow {
+  return {
+    ...workflow,
+    running: false,
+    sample: workflow.sample ?? (workflow.runId === undefined && workflow.nodes.some((node) => node.data.tokensUsed > 0)),
+    nodes: workflow.nodes.map((node) => {
+      const interrupted = workflow.running && ['active', 'queued'].includes(node.data.status)
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          costUsed: node.data.costUsed ?? sampleCost(node.data.tokensUsed),
+          status: interrupted ? 'idle' : node.data.status,
+          task: interrupted ? 'Interrupted' : node.data.task
+        }
+      }
+    })
   }
 }
 
@@ -171,6 +207,7 @@ function layeredPositions(workflow: Workflow) {
 
 export const useApp = create<AppState>((set, get) => ({
   hydrated: false,
+  hasApiKey: false,
   projects: [],
   agents: [],
   downloads: {},
@@ -182,11 +219,14 @@ export const useApp = create<AppState>((set, get) => ({
   inspectorOpen: false,
   logsOpen: false,
   switcherOpen: false,
+  settingsOpen: false,
+  runPanelOpen: false,
   creatingWorkflow: false,
   builderDraft: null,
   builderSection: null,
 
   async hydrate() {
+    set({ hasApiKey: await bridge.hasApiKey().catch(() => false) })
     const saved = await bridge.loadState()
     if (saved) {
       try {
@@ -195,7 +235,7 @@ export const useApp = create<AppState>((set, get) => ({
           ...state,
           projects: state.projects.map((project) => ({
             ...project,
-            workflows: project.workflows.map((workflow) => ({ ...workflow, running: false }))
+            workflows: project.workflows.map(restoreWorkflow)
           })),
           hydrated: true
         })
@@ -223,6 +263,17 @@ export const useApp = create<AppState>((set, get) => ({
 
   setUi: (patch) => set(patch),
   setTheme: (theme) => set({ theme }),
+
+  async saveApiKey(key) {
+    const result = await bridge.saveApiKey(key)
+    if (result.ok) set({ hasApiKey: true })
+    return result
+  },
+
+  async removeApiKey() {
+    await bridge.removeApiKey()
+    set({ hasApiKey: false })
+  },
 
   selectProject: (id) => set({ activeProjectId: id, switcherOpen: false }),
 
@@ -300,34 +351,58 @@ export const useApp = create<AppState>((set, get) => ({
       })
     ),
 
-  toggleRun: () =>
-    set((state) =>
-      withActiveWorkflow(state, (workflow) => (workflow.running ? stopRun(workflow) : startRun(workflow)))
-    ),
-
-  tick() {
-    const { projects, agents } = get()
-    const anyRunning = projects.some((project) => project.workflows.some((workflow) => workflow.running))
-    if (!anyRunning) return
-    set({
-      projects: projects.map((project) => ({
-        ...project,
-        workflows: project.workflows.map((workflow) => (workflow.running ? tickWorkflow(workflow, agents) : workflow))
-      }))
+  beginRun(goal) {
+    const state = get()
+    const runId = crypto.randomUUID()
+    const request = buildRunRequest(activeWorkflow(state), state.agents, goal, runId)
+    set({ runPanelOpen: false, ...withActiveWorkflow(state, (workflow) => prepareRun(workflow, goal, runId)) })
+    bridge.startRun(request).catch((error: Error) => {
+      get().applyRunEvent({ type: 'end', runId, outcome: 'failed', message: error.message })
     })
   },
 
-  inject: (nodeId, text) =>
-    set((state) =>
-      withActiveWorkflow(state, (workflow) => {
-        const node = workflow.nodes.find((candidate) => candidate.id === nodeId)
-        const agent = state.agents.find((candidate) => candidate.id === node?.data.agentId)
-        return {
-          ...workflow,
-          log: [...workflow.log, logEntry(nodeId, agent?.name ?? 'Agent', `Instruction injected: ${text}`)]
-        }
-      })
-    ),
+  stopRun() {
+    const { runId } = activeWorkflow(get())
+    if (runId) void bridge.stopRun(runId)
+  },
+
+  applyRunEvent: (event) =>
+    set((state) => ({
+      inspectorOpen:
+        state.inspectorOpen ||
+        (event.type === 'end' && event.outcome === 'completed' && activeWorkflow(state).runId === event.runId),
+      projects: state.projects.map((project) => ({
+        ...project,
+        workflows: project.workflows.map((workflow) =>
+          workflow.runId === event.runId ? reduceRunEvent(workflow, event) : workflow
+        )
+      }))
+    })),
+
+  // Agents make one model call each, so an instruction can only reach one that has not started.
+  inject(nodeId, text) {
+    const state = get()
+    const current = activeWorkflow(state)
+    const node = current.nodes.find((candidate) => candidate.id === nodeId)
+    const agent = state.agents.find((candidate) => candidate.id === node?.data.agentId)
+    if (!node) return
+
+    if (current.running && current.runId) void bridge.injectInstruction(current.runId, nodeId, text)
+    set(
+      withActiveWorkflow(state, (workflow) => ({
+        ...workflow,
+        log: appendLog(workflow.log, [logEntry(nodeId, agent?.name ?? 'Agent', `Instruction added: ${text}`)]),
+        nodes: workflow.nodes.map((candidate) =>
+          candidate.id === nodeId && !workflow.running
+            ? {
+                ...candidate,
+                data: { ...candidate.data, instructions: [...(candidate.data.instructions ?? []), text] }
+              }
+            : candidate
+        )
+      }))
+    )
+  },
 
   setNodeModel: (nodeId, model) =>
     set((state) =>
@@ -337,18 +412,6 @@ export const useApp = create<AppState>((set, get) => ({
           node.id === nodeId ? { ...node, data: { ...node.data, activeModel: model } } : node
         )
       }))
-    ),
-
-  togglePause: (nodeId) =>
-    set((state) =>
-      withActiveWorkflow(state, (workflow) => {
-        const nodes = workflow.nodes.map((node) => {
-          if (node.id !== nodeId) return node
-          const status = node.data.status === 'active' ? ('idle' as const) : ('active' as const)
-          return { ...node, data: { ...node.data, status } }
-        })
-        return { ...workflow, nodes, running: workflow.running || nodes.some((node) => node.data.status === 'active') }
-      })
     ),
 
   openBuilder(agentId, section) {

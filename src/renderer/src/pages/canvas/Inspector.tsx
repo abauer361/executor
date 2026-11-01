@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import { RUNNABLE_MODELS } from '../../../../shared/pricing'
 import { Icon, Kbd, RobotFace, StatusDot } from '../../components/ui'
 import { modelName } from '../../data/models'
-import { costOf, formatDollars, formatTokens, tokenLimit } from '../../sim'
 import { activeWorkflow, useApp, type BuilderSection } from '../../store'
+import { budgetShare, formatDollars, formatTokens, runnableModel } from '../../usage'
 
-const STATUS_NAME = { active: 'Active', warning: 'Waiting', stopped: 'Stopped', idle: 'Idle' }
+const STATUS_NAME = { active: 'Active', queued: 'Queued', warning: 'Waiting', stopped: 'Stopped', idle: 'Idle' }
 
 function EditRow({
   icon,
@@ -31,7 +32,7 @@ export function Inspector() {
   const open = useApp((state) => state.inspectorOpen)
   const workflow = useApp(activeWorkflow)
   const agents = useApp((state) => state.agents)
-  const { setUi, openBuilder, inject, setNodeModel, togglePause } = useApp.getState()
+  const { setUi, openBuilder, inject, setNodeModel } = useApp.getState()
   const [instruction, setInstruction] = useState('')
 
   if (!open) return null
@@ -62,14 +63,16 @@ export function Inspector() {
     )
   }
 
-  const limit = tokenLimit(agent.limiter)
-  const share = Math.min(100, Math.round(limit ? (node.data.tokensUsed / limit) * 100 : 100))
+  const { limiter } = agent
+  const share = Math.round(budgetShare(agent, node.data) * 100)
   const activity = workflow.log.filter((entry) => entry.nodeId === node.id).slice(-30).reverse()
-  const model = agent.models.includes(node.data.activeModel) ? node.data.activeModel : agent.models[0]
+  const model = runnableModel(agent, node.data.activeModel) ?? node.data.activeModel
   const edit = (section: BuilderSection) => openBuilder(agent.id, section)
+  const alreadyStarted = workflow.running && node.data.status !== 'queued'
+  const canInject = instruction.trim().length > 0 && !alreadyStarted
 
   const send = () => {
-    if (!instruction.trim()) return
+    if (!canInject) return
     inject(node.id, instruction.trim())
     setInstruction('')
   }
@@ -101,14 +104,52 @@ export function Inspector() {
               className="select select-chip"
               aria-label="Active model"
               value={model}
+              disabled={workflow.running}
               onChange={(event) => setNodeModel(node.id, event.target.value)}
             >
               {agent.models.map((id) => (
-                <option key={id} value={id}>
+                <option key={id} value={id} disabled={!RUNNABLE_MODELS.includes(id)}>
                   {modelName(id)}
                 </option>
               ))}
             </select>
+          </div>
+        </section>
+
+        {node.data.output && (
+          <section className="stack gap-6">
+            <div className="row">
+              <span className="eyebrow grow">Output</span>
+              <button
+                className="btn btn-ghost btn-mini"
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(node.data.output ?? '')}
+              >
+                <Icon name="content_copy" size={14} />
+                Copy
+              </button>
+            </div>
+            <div className="output mono">{node.data.output}</div>
+          </section>
+        )}
+
+        <section className="stack gap-6">
+          <div className="row">
+            <span className="eyebrow grow">{limiter.mode === 'tokens' ? 'Token Budget' : 'Dollar Budget'}</span>
+            <span className="mono strong">{share}%</span>
+          </div>
+          <div className={`meter ${share >= 80 ? 'is-warning' : ''}`}>
+            <span style={{ width: `${share}%` }} />
+          </div>
+          <div className="row mono muted">
+            <span className="grow">
+              {formatTokens(node.data.tokensUsed)} tokens used · {formatDollars(node.data.costUsed)}
+            </span>
+            <span>
+              {limiter.mode === 'tokens'
+                ? `${formatTokens(limiter.tokens)} limit`
+                : `${formatDollars(limiter.dollars)} limit`}
+            </span>
           </div>
         </section>
 
@@ -129,41 +170,19 @@ export function Inspector() {
             className="textarea"
             rows={2}
             value={instruction}
-            placeholder="Send an instruction to this agent..."
+            placeholder={
+              alreadyStarted ? 'This agent has already started.' : 'Add an instruction for when this agent starts...'
+            }
+            disabled={alreadyStarted}
             onChange={(event) => setInstruction(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send()
             }}
           />
-          <button
-            className="btn btn-primary inject"
-            type="button"
-            disabled={!instruction.trim()}
-            onClick={send}
-          >
+          <button className="btn btn-primary inject" type="button" disabled={!canInject} onClick={send}>
             Inject
             <Icon name="arrow_forward" size={14} />
           </button>
-        </section>
-
-        <section className="stack gap-6">
-          <div className="row">
-            <span className="eyebrow grow">{agent.limiter.mode === 'tokens' ? 'Token Budget' : 'Dollar Budget'}</span>
-            <span className="mono strong">{share}%</span>
-          </div>
-          <div className={`meter ${share >= 80 ? 'is-warning' : ''}`}>
-            <span style={{ width: `${share}%` }} />
-          </div>
-          <div className="row mono muted">
-            <span className="grow">
-              {formatTokens(node.data.tokensUsed)} tokens used · {formatDollars(costOf(node.data.tokensUsed))}
-            </span>
-            <span>
-              {agent.limiter.mode === 'tokens'
-                ? `${formatTokens(limit)} limit`
-                : `${formatDollars(agent.limiter.dollars)} limit`}
-            </span>
-          </div>
         </section>
 
         <section className="stack gap-6">
@@ -177,16 +196,6 @@ export function Inspector() {
             {activity.length === 0 && <div className="faint">No activity yet.</div>}
           </div>
         </section>
-
-        <button
-          className="btn btn-secondary btn-block"
-          type="button"
-          disabled={node.data.status === 'stopped' || node.data.status === 'warning'}
-          onClick={() => togglePause(node.id)}
-        >
-          <Icon name={node.data.status === 'active' ? 'pause' : 'play_arrow'} />
-          {node.data.status === 'active' ? 'Pause Agent' : 'Resume Agent'}
-        </button>
       </div>
     </aside>
   )

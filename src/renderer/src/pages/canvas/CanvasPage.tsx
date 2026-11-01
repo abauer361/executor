@@ -1,26 +1,27 @@
 import { ReactFlowProvider, useReactFlow, useViewport } from '@xyflow/react'
 import { Icon, StatusDot } from '../../components/ui'
-import { costOf, formatDollars, formatTokens, totalTokens, workflowStatus } from '../../sim'
 import { activeProject, activeWorkflow, useApp } from '../../store'
+import { formatDollars, formatTokens, totalCost, totalTokens, workflowStatus } from '../../usage'
 import { Drawer } from './Drawer'
 import { FIT_OPTIONS, FlowCanvas } from './FlowCanvas'
 import { Inspector } from './Inspector'
+import { RunControl } from './RunControl'
 
 const STATUS_LABEL = {
   active: 'Active Execution',
   warning: 'Needs Review',
-  stopped: 'Stopped'
+  stopped: 'Stopped',
+  completed: 'Completed'
 }
 
 function Ribbon() {
   const workflow = useApp(activeWorkflow)
   const logsOpen = useApp((state) => state.logsOpen)
-  const { toggleRun, autoLayout, setUi } = useApp.getState()
+  const { autoLayout, setUi } = useApp.getState()
   const { zoomIn, zoomOut, fitView } = useReactFlow()
   const { zoom } = useViewport()
 
   const status = workflowStatus(workflow)
-  const tokens = totalTokens(workflow)
 
   const layout = () => {
     autoLayout()
@@ -36,8 +37,9 @@ function Ribbon() {
         <span className="muted">{STATUS_LABEL[status]}</span>
         <span className="ribbon-divider" />
         <span className="mono muted">
-          {formatTokens(tokens)} tokens · {formatDollars(costOf(tokens))} this run
+          {formatTokens(totalTokens(workflow))} tokens · {formatDollars(totalCost(workflow))} this run
         </span>
+        {workflow.sample && <span className="chip">Sample data</span>}
       </div>
 
       <div className="row">
@@ -66,10 +68,7 @@ function Ribbon() {
           Logs
         </button>
         <span className="ribbon-divider" />
-        <button className="btn btn-primary" type="button" disabled={workflow.nodes.length === 0} onClick={toggleRun}>
-          <Icon name={workflow.running ? 'stop' : 'play_arrow'} />
-          {workflow.running ? 'Stop' : 'Run'}
-        </button>
+        <RunControl />
       </div>
     </div>
   )
@@ -81,7 +80,7 @@ function LogsPanel() {
 
   return (
     <section className="logs" aria-label="Logs">
-      <div className="logs-head eyebrow">Logs · simulated run data</div>
+      <div className="logs-head eyebrow">Logs</div>
       <div className="logs-body mono">
         {entries.map((entry) => (
           <div key={entry.id} className="log-line">
@@ -90,7 +89,7 @@ function LogsPanel() {
             <span className="muted">{entry.message}</span>
           </div>
         ))}
-        {entries.length === 0 && <div className="faint">No activity yet. Press Run to start a simulated run.</div>}
+        {entries.length === 0 && <div className="faint">No activity yet. Press Run to start.</div>}
       </div>
     </section>
   )

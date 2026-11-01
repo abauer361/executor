@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { Project } from '../../../shared/types'
-import { countOf, workflowStatus } from '../sim'
 import { useApp } from '../store'
+import { countOf, workflowStatus } from '../usage'
 import { Icon, Kbd, StatusDot } from './ui'
 
 function projectStatus(project: Project) {

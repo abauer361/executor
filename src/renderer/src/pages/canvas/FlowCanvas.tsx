@@ -16,8 +16,8 @@ import {
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import type { NodeRun, WorkflowEdge, WorkflowNode } from '../../../../shared/types'
 import { Icon, Kbd, RobotFace, StatusDot } from '../../components/ui'
-import { costOf, formatDollars, formatTokens, tokenLimit } from '../../sim'
 import { activeWorkflow, useApp } from '../../store'
+import { budgetShare, formatDollars, formatTokens } from '../../usage'
 import { DotMatrix } from './DotMatrix'
 
 export const AGENT_DRAG_TYPE = 'application/x-executor-agent'
@@ -33,11 +33,10 @@ function AgentNode({ data, selected }: NodeProps<Node<NodeRun, 'agent'>>) {
   const agent = useApp((state) => state.agents.find((candidate) => candidate.id === data.agentId))
   if (!agent) return null
 
-  const limit = tokenLimit(agent.limiter)
-  const share = Math.min(1, limit ? data.tokensUsed / limit : 1)
+  const share = budgetShare(agent, data)
   const near = share >= NEAR_LIMIT
   const usedLabel = formatTokens(data.tokensUsed)
-  const cost = formatDollars(costOf(data.tokensUsed))
+  const cost = formatDollars(data.costUsed)
   const amber = data.status === 'warning' || near
 
   return (
@@ -67,7 +66,7 @@ function AgentNode({ data, selected }: NodeProps<Node<NodeRun, 'agent'>>) {
           {agent.limiter.mode === 'tokens' ? (
             <>
               <span>
-                {usedLabel} / {formatTokens(limit)}
+                {usedLabel} / {formatTokens(agent.limiter.tokens)}
               </span>
               <span>{cost}</span>
             </>

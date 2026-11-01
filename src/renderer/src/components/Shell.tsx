@@ -1,5 +1,5 @@
-import { workflowStatus } from '../sim'
 import { activeProject, activeWorkflow, useApp, type Page } from '../store'
+import { workflowStatus } from '../usage'
 import { Icon, Kbd, StatusDot } from './ui'
 
 const NAV: { page: Page; label: string; icon: string; crumb: string }[] = [
@@ -71,14 +71,24 @@ export function Header() {
         <span className="crumb-sep">/</span>
         <span className="crumb-page">{crumb}</span>
       </div>
-      <button
-        className="icon-button"
-        type="button"
-        aria-label="Toggle theme"
-        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-      >
-        <Icon name={theme === 'dark' ? 'dark_mode' : 'light_mode'} size={18} />
-      </button>
+      <div className="row">
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="Settings"
+          onClick={() => setUi({ settingsOpen: true })}
+        >
+          <Icon name="settings" size={18} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="Toggle theme"
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        >
+          <Icon name={theme === 'dark' ? 'dark_mode' : 'light_mode'} size={18} />
+        </button>
+      </div>
     </header>
   )
 }

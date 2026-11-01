@@ -1,9 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, sep } from 'node:path'
-import type { CatalogPackage, PickedDoc } from '../shared/types'
+import type { CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
+import { createModelClient, verifyApiKey } from './anthropicClient'
+import { launchRun, type RunHandle } from './runEngine'
+import { hasApiKey, loadApiKey, removeApiKey, saveApiKey } from './secrets'
 
 const KINDS = new Set(['mcp', 'skill', 'agent', 'workflow'])
+const runs = new Map<string, RunHandle>()
 
 const statePath = () => join(app.getPath('userData'), 'state.json')
 const libraryRoot = () => join(app.getPath('userData'), 'library')
@@ -71,6 +75,34 @@ function registerIpc() {
   ipcMain.handle('shell:open', async (_event, url: string) => {
     if (isWebUrl(url)) await shell.openExternal(url)
   })
+
+  ipcMain.handle('key:status', () => hasApiKey())
+  ipcMain.handle('key:remove', () => removeApiKey())
+  ipcMain.handle('key:save', async (_event, key: string): Promise<KeyResult> => {
+    const result = await verifyApiKey(key)
+    if (result.ok) await saveApiKey(key)
+    return result
+  })
+
+  ipcMain.handle('run:start', async (event, request: RunRequest) => {
+    const { sender } = event
+    const emit = (runEvent: RunEvent) => {
+      if (!sender.isDestroyed()) sender.send('run:event', runEvent)
+    }
+    const key = await loadApiKey()
+    if (!key) {
+      emit({ type: 'end', runId: request.runId, outcome: 'failed', message: 'Add an Anthropic API key to run agents.' })
+      return
+    }
+    const handle = launchRun(request, createModelClient(key), emit)
+    runs.set(request.runId, handle)
+    void handle.done.finally(() => runs.delete(request.runId))
+  })
+
+  ipcMain.handle('run:stop', (_event, runId: string) => runs.get(runId)?.stop())
+  ipcMain.handle('run:inject', (_event, runId: string, nodeId: string, text: string) =>
+    runs.get(runId)?.inject(nodeId, text)
+  )
 }
 
 function createWindow() {
@@ -110,6 +142,10 @@ void app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  for (const run of runs.values()) run.stop()
 })
 
 app.on('window-all-closed', () => {

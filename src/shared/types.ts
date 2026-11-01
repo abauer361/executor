@@ -1,6 +1,7 @@
 export type PackageKind = 'mcp' | 'skill' | 'agent' | 'workflow'
-export type AgentStatus = 'active' | 'warning' | 'stopped' | 'idle'
-export type WorkflowStatus = 'active' | 'warning' | 'stopped'
+export type AgentStatus = 'active' | 'queued' | 'warning' | 'stopped' | 'idle'
+export type WorkflowStatus = 'active' | 'warning' | 'stopped' | 'completed'
+export type RunOutcome = 'completed' | 'stopped' | 'halted' | 'failed'
 export type LimiterMode = 'tokens' | 'dollars'
 
 export interface Limiter {
@@ -40,7 +41,10 @@ export type NodeRun = {
   status: AgentStatus
   task: string
   tokensUsed: number
+  costUsed: number
   activeModel: string
+  output?: string
+  instructions?: string[]
 }
 
 export interface WorkflowNode {
@@ -78,6 +82,10 @@ export interface Workflow {
   schedule?: string
   note?: string
   log: LogEntry[]
+  sample?: boolean
+  runId?: string
+  goal?: string
+  outcome?: RunOutcome
 }
 
 export interface Project {
@@ -120,6 +128,34 @@ export interface PickedDoc {
   size: number
 }
 
+export interface RunNodeSpec {
+  id: string
+  name: string
+  prompt: string
+  model: string
+  limiter: Limiter
+  instructions: string[]
+}
+
+export interface RunRequest {
+  runId: string
+  goal: string
+  nodes: RunNodeSpec[]
+  edges: { source: string; target: string }[]
+}
+
+export type RunEvent =
+  | { type: 'node'; runId: string; nodeId: string; status: AgentStatus; task: string }
+  | { type: 'usage'; runId: string; nodeId: string; tokens: number; cost: number }
+  | { type: 'output'; runId: string; nodeId: string; text: string }
+  | { type: 'log'; runId: string; nodeId: string | null; agent: string; message: string }
+  | { type: 'end'; runId: string; outcome: RunOutcome; message?: string }
+
+export interface KeyResult {
+  ok: boolean
+  message?: string
+}
+
 export interface ExecutorBridge {
   platform: string
   loadState(): Promise<string | null>
@@ -129,4 +165,11 @@ export interface ExecutorBridge {
   revealPath(path: string): Promise<void>
   pickDocs(): Promise<PickedDoc[]>
   openExternal(url: string): Promise<void>
+  hasApiKey(): Promise<boolean>
+  saveApiKey(key: string): Promise<KeyResult>
+  removeApiKey(): Promise<void>
+  startRun(request: RunRequest): Promise<void>
+  stopRun(runId: string): Promise<void>
+  injectInstruction(runId: string, nodeId: string, text: string): Promise<void>
+  onRunEvent(listener: (event: RunEvent) => void): () => void
 }

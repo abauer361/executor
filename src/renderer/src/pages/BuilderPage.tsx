@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
+import { RUNNABLE_MODELS } from '../../../shared/pricing'
 import type { Agent, MemoryDoc, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon, RobotFace } from '../components/ui'
 import { CATALOG, packageById } from '../data/catalog'
 import { MODELS } from '../data/models'
-import { agentSummary, tokenLimit } from '../sim'
 import { useApp } from '../store'
+import { agentSummary } from '../usage'
 
 const TOKEN_PRESETS = [25_000, 50_000, 100_000, 250_000, 500_000]
 const DOLLAR_PRESETS = [1, 5, 10, 25, 50]
@@ -114,14 +115,17 @@ function ModelPool({ draft }: { draft: Agent }) {
                 <input className="check" type="checkbox" checked={checked} onChange={() => toggle(model.id)} />
               </span>
               <span className="strong truncate">{model.name}</span>
-              <span className="mono faint">{model.focus}</span>
+              <span className="mono faint">
+                {RUNNABLE_MODELS.includes(model.id) ? model.focus : 'Not connected yet'}
+              </span>
             </label>
           )
         })}
       </div>
       <p className="note">
         <Icon name="auto_awesome" size={15} />
-        With more than one model selected, each turn routes to the most token-efficient model for its complexity.
+        Runs use the model picked in the Inspector, or the first Claude model here. Automatic routing between models
+        is not built yet.
       </p>
     </Section>
   )
@@ -352,7 +356,7 @@ export function BuilderPage() {
       ? 'Name the agent to save it.'
       : draft.models.length === 0
         ? 'Select at least one model.'
-        : tokenLimit(draft.limiter) <= 0
+        : (draft.limiter.mode === 'tokens' ? draft.limiter.tokens : draft.limiter.dollars) <= 0
           ? 'Set a limit above zero.'
           : null
 

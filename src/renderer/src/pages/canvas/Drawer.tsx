@@ -3,14 +3,16 @@ import { useState, type DragEvent } from 'react'
 import type { Agent, Workflow } from '../../../../shared/types'
 import { Icon, RobotFace, StatusBadge, StatusDot } from '../../components/ui'
 import { CATALOG } from '../../data/catalog'
-import { agentSummary, countOf, timeAgo, workflowStatus } from '../../sim'
 import { activeProject, useApp } from '../../store'
+import { agentSummary, countOf, timeAgo, workflowStatus } from '../../usage'
 import { AGENT_DRAG_TYPE, dropPosition } from './FlowCanvas'
 
 function runLabel(workflow: Workflow) {
   if (workflow.note) return workflow.note
   if (workflow.schedule) return `Scheduled ${workflow.schedule}`
   if (workflow.running) return 'Running'
+  if (workflow.outcome === 'failed') return 'Failed'
+  if (workflow.outcome === 'halted') return 'Limit reached'
   if (workflow.lastRunAt === null) return 'Not run yet'
   return `Run ${timeAgo(workflow.lastRunAt)}`
 }

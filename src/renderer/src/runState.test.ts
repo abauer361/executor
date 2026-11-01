@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Agent, AgentStatus, Workflow, WorkflowNode } from '../../shared/types'
-import { buildRunRequest, prepareRun, reduceRunEvent, runProblems, runSpendCeiling } from './runState'
+import { buildRunRequest, prepareRun, reduceRunEvent, runProblems, runSpendCeiling, runWarnings, serverState } from './runState'
 import { agentSummary, budgetShare, formatDollars, formatTokens, runnableModel, sampleCost, workflowStatus } from './usage'
 
 const agent = (patch: Partial<Agent> = {}): Agent => ({
@@ -138,6 +138,53 @@ describe('reduceRunEvent', () => {
     expect(state.nodes.every((candidate) => candidate.data.status === 'idle')).toBe(true)
     expect(state.log.at(-1)?.message).toContain('Bad key')
     expect(workflowStatus(state)).toBe('stopped')
+  })
+})
+
+describe('approvals', () => {
+  const started = prepareRun(workflow([node('a'), node('b')]), 'Goal', 'r')
+  const approval = { id: 'x', nodeId: 'b', agent: 'B', tool: 'files write', input: '{}' }
+
+  it('shows the agent that is waiting', () => {
+    const state = reduceRunEvent(started, { type: 'approval', runId: 'r', approval })
+    expect(state.approvals).toEqual([approval])
+    expect(state.nodes.find((candidate) => candidate.selected)?.id).toBe('b')
+  })
+
+  it('clears an approval once it is answered', () => {
+    const waiting = reduceRunEvent(started, { type: 'approval', runId: 'r', approval })
+    expect(reduceRunEvent(waiting, { type: 'approval-resolved', runId: 'r', approvalId: 'x' }).approvals).toEqual([])
+  })
+
+  it('clears unanswered approvals when the run ends', () => {
+    const waiting = reduceRunEvent(started, { type: 'approval', runId: 'r', approval })
+    expect(reduceRunEvent(waiting, { type: 'end', runId: 'r', outcome: 'stopped' }).approvals).toEqual([])
+  })
+})
+
+describe('server readiness', () => {
+  const downloaded = { filesystem: { packageId: 'filesystem', path: 'x', downloadedAt: 0 } }
+  const empty = { folders: {}, secrets: [] }
+
+  it('tells a missing server from one that needs setup', () => {
+    expect(serverState('time', downloaded, {})).toBe('not-downloaded')
+    expect(serverState('filesystem', downloaded, { filesystem: empty })).toBe('needs-setup')
+    expect(serverState('filesystem', downloaded, { filesystem: { folders: { folders: ['/a'] }, secrets: [] } })).toBe('ready')
+  })
+
+  it('warns about servers agents cannot use yet', () => {
+    const agents = [agent({ mcpServers: ['filesystem', 'time'] })]
+    expect(runWarnings(workflow([node('a')]), agents, downloaded, {})).toEqual(['filesystem', 'time'])
+  })
+
+  it('sends attached tools, skills and memory with the run', () => {
+    const memory = [{ id: 'd', name: 'a.md', path: '/a.md', size: 1 }]
+    const agents = [agent({ mcpServers: ['time'], skills: ['mcp-builder'], memory })]
+    expect(buildRunRequest(workflow([node('a')]), agents, 'Goal', 'r').nodes[0]).toMatchObject({
+      mcpServers: ['time'],
+      skills: ['mcp-builder'],
+      memory
+    })
   })
 })
 

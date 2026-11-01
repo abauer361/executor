@@ -3,7 +3,9 @@ import type { CatalogPackage, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon } from '../components/ui'
 import { CATALOG, KIND_LABEL } from '../data/catalog'
+import { serverState } from '../runState'
 import { useApp } from '../store'
+import { countOf } from '../usage'
 
 type Filter = 'all' | PackageKind | 'downloaded'
 
@@ -46,6 +48,34 @@ function Facts({ pkg }: { pkg: CatalogPackage }) {
         </div>
       ))}
     </dl>
+  )
+}
+
+function ServerStatus({ pkg }: { pkg: CatalogPackage }) {
+  const check = useApp((state) => state.downloads[pkg.id]?.check)
+  const checking = useApp((state) => state.mcpChecking.includes(pkg.id))
+  const state = useApp((store) => serverState(pkg.id, store.downloads, store.mcpSetups))
+  const { checkMcpServer, setUi } = useApp.getState()
+
+  if (checking) return <p className="mono faint package-hint">Starting the server. The first time can take a minute.</p>
+  if (state === 'needs-setup') {
+    return (
+      <p className="mono warning-text package-hint">
+        Needs setup.{' '}
+        <button className="link" type="button" onClick={() => setUi({ settingsOpen: true })}>
+          Open Settings
+        </button>
+      </p>
+    )
+  }
+  if (check?.ok) return <p className="mono faint package-hint">Ready: {countOf(check.tools ?? 0, 'tool')}. Add it in Agent Builder.</p>
+  return (
+    <p className={`mono package-hint ${check ? 'package-error' : 'faint'}`}>
+      {check ? check.message : 'Not tested yet.'}{' '}
+      <button className="link" type="button" onClick={() => void checkMcpServer(pkg.id)}>
+        {check ? 'Try again' : 'Test it'}
+      </button>
+    </p>
   )
 }
 
@@ -134,11 +164,9 @@ function PackageCard({ pkg }: { pkg: CatalogPackage }) {
           </button>
         )}
       </div>
-      {error ? (
-        <p className="mono package-error">{error}</p>
-      ) : (
-        record && <p className="mono faint package-hint">{USE_HINT[pkg.kind]}</p>
-      )}
+      {error && <p className="mono package-error package-hint">{error}</p>}
+      {!error && record && pkg.kind === 'mcp' && <ServerStatus pkg={pkg} />}
+      {!error && record && pkg.kind !== 'mcp' && <p className="mono faint package-hint">{USE_HINT[pkg.kind]}</p>}
     </article>
   )
 }
@@ -164,7 +192,8 @@ export function MarketplacePage() {
         <header className="market-head">
           <h1>Agent Marketplace</h1>
           <p className="muted">
-            Download open-source MCP servers and skills, plus example agents and workflows, to use on this Mac.
+            Download open-source MCP servers and skills, plus example agents and workflows, to use on this Mac. MCP
+            servers run third-party code here, so download only what you trust.
           </p>
         </header>
 

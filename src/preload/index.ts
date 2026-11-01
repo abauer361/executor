@@ -16,6 +16,12 @@ const bridge: ExecutorBridge = {
   startRun: (request) => ipcRenderer.invoke('run:start', request),
   stopRun: (runId) => ipcRenderer.invoke('run:stop', runId),
   injectInstruction: (runId, nodeId, text) => ipcRenderer.invoke('run:inject', runId, nodeId, text),
+  resolveApproval: (runId, approvalId, decision) => ipcRenderer.invoke('run:approve', runId, approvalId, decision),
+  getMcpSetups: () => ipcRenderer.invoke('mcp:setups'),
+  pickFolders: (multiple) => ipcRenderer.invoke('mcp:pick-folders', multiple),
+  saveMcpFolders: (id, key, folders) => ipcRenderer.invoke('mcp:save-folders', id, key, folders),
+  saveMcpSecret: (id, key, value) => ipcRenderer.invoke('mcp:save-secret', id, key, value),
+  checkMcpServer: (id) => ipcRenderer.invoke('mcp:check', id),
   onRunEvent: (listener) => {
     const handler = (_event: unknown, runEvent: RunEvent) => listener(runEvent)
     ipcRenderer.on('run:event', handler)

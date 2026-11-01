@@ -1,6 +1,15 @@
 import { spendCeiling } from '../../shared/pricing'
+import { MCP_SERVERS, missingSettings, type McpStoredSetup } from '../../shared/mcpServers'
 import { hasCycle } from '../../shared/runGraph'
-import type { Agent, RunEvent, RunOutcome, RunRequest, Workflow, WorkflowNode } from '../../shared/types'
+import type {
+  Agent,
+  DownloadRecord,
+  RunEvent,
+  RunOutcome,
+  RunRequest,
+  Workflow,
+  WorkflowNode
+} from '../../shared/types'
 import { appendLog, formatDollars, formatTokens, logEntry, runnableModel, totalCost, totalTokens } from './usage'
 
 const OUTCOME_MESSAGE: Record<RunOutcome, string> = {
@@ -29,6 +38,30 @@ export function runProblems(workflow: Workflow, agents: Agent[]) {
   return problems
 }
 
+export type ServerState = 'not-downloaded' | 'needs-setup' | 'ready'
+
+export function serverState(id: string, downloads: Record<string, DownloadRecord>, setups: Record<string, McpStoredSetup>): ServerState {
+  const spec = MCP_SERVERS[id]
+  if (!spec || !downloads[id]) return 'not-downloaded'
+  const setup = setups[id] ?? { folders: {}, secrets: [] }
+  return missingSettings(spec, setup).length ? 'needs-setup' : 'ready'
+}
+
+// Servers an agent cannot use yet. The run still goes ahead without them.
+export function runWarnings(
+  workflow: Workflow,
+  agents: Agent[],
+  downloads: Record<string, DownloadRecord>,
+  setups: Record<string, McpStoredSetup>
+) {
+  const unavailable = new Set(
+    workflow.nodes
+      .flatMap((node) => agentFor(node, agents)?.mcpServers ?? [])
+      .filter((id) => serverState(id, downloads, setups) !== 'ready')
+  )
+  return [...unavailable]
+}
+
 // The most this run could cost if every agent used its full limit.
 export function runSpendCeiling(workflow: Workflow, agents: Agent[]) {
   return workflow.nodes.reduce((sum, node) => {
@@ -54,7 +87,10 @@ export function buildRunRequest(workflow: Workflow, agents: Agent[], goal: strin
           prompt: agent.prompt,
           model,
           limiter: agent.limiter,
-          instructions: node.data.instructions ?? []
+          instructions: node.data.instructions ?? [],
+          mcpServers: agent.mcpServers,
+          skills: agent.skills,
+          memory: agent.memory
         }
       ]
     })
@@ -70,6 +106,7 @@ export function prepareRun(workflow: Workflow, goal: string, runId: string): Wor
     sample: false,
     outcome: undefined,
     note: undefined,
+    approvals: [],
     lastRunAt: Date.now(),
     log: appendLog(workflow.log, [logEntry(null, workflow.name, `Run started: ${goal}`)]),
     nodes: workflow.nodes.map((node) => ({
@@ -112,6 +149,7 @@ function finishRun(workflow: Workflow, outcome: RunOutcome, message?: string): W
     ...finished,
     running: false,
     outcome,
+    approvals: [],
     log: appendLog(workflow.log, [logEntry(null, workflow.name, summary)])
   }
 }
@@ -126,6 +164,14 @@ export function reduceRunEvent(workflow: Workflow, event: RunEvent): Workflow {
       return patchNode(workflow, event.nodeId, { output: event.text })
     case 'log':
       return { ...workflow, log: appendLog(workflow.log, [logEntry(event.nodeId, event.agent, event.message)]) }
+    case 'approval':
+      return {
+        ...workflow,
+        approvals: [...(workflow.approvals ?? []), event.approval],
+        nodes: workflow.nodes.map((node) => ({ ...node, selected: node.id === event.approval.nodeId }))
+      }
+    case 'approval-resolved':
+      return { ...workflow, approvals: (workflow.approvals ?? []).filter((item) => item.id !== event.approvalId) }
     case 'end':
       return finishRun(workflow, event.outcome, event.message)
   }

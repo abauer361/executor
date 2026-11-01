@@ -1,7 +1,7 @@
 import { ReactFlowProvider, useReactFlow, useViewport } from '@xyflow/react'
 import { Icon, StatusDot } from '../../components/ui'
 import { activeProject, activeWorkflow, useApp } from '../../store'
-import { formatDollars, formatTokens, totalCost, totalTokens, workflowStatus } from '../../usage'
+import { countOf, formatDollars, formatTokens, totalCost, totalTokens, workflowStatus } from '../../usage'
 import { Drawer } from './Drawer'
 import { FIT_OPTIONS, FlowCanvas } from './FlowCanvas'
 import { Inspector } from './Inspector'
@@ -9,7 +9,7 @@ import { RunControl } from './RunControl'
 
 const STATUS_LABEL = {
   active: 'Active Execution',
-  warning: 'Needs Review',
+  warning: 'Waiting on You',
   stopped: 'Stopped',
   completed: 'Completed'
 }
@@ -40,6 +40,9 @@ function Ribbon() {
           {formatTokens(totalTokens(workflow))} tokens · {formatDollars(totalCost(workflow))} this run
         </span>
         {workflow.sample && <span className="chip">Sample data</span>}
+        {(workflow.approvals?.length ?? 0) > 0 && (
+          <span className="badge badge-warning">{countOf(workflow.approvals?.length ?? 0, 'approval')} needed</span>
+        )}
       </div>
 
       <div className="row">

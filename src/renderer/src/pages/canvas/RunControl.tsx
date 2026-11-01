@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Icon, Kbd } from '../../components/ui'
-import { runProblems, runSpendCeiling } from '../../runState'
+import { packageById } from '../../data/catalog'
+import { runProblems, runSpendCeiling, runWarnings } from '../../runState'
 import { activeWorkflow, useApp } from '../../store'
 import { countOf, formatDollars } from '../../usage'
 
@@ -8,6 +9,8 @@ function RunPanel() {
   const workflow = useApp(activeWorkflow)
   const agents = useApp((state) => state.agents)
   const hasApiKey = useApp((state) => state.hasApiKey)
+  const downloads = useApp((state) => state.downloads)
+  const mcpSetups = useApp((state) => state.mcpSetups)
   const { beginRun, setUi } = useApp.getState()
   const [goal, setGoal] = useState(workflow.goal ?? '')
 
@@ -29,6 +32,7 @@ function RunPanel() {
 
   const problems = runProblems(workflow, agents)
   const canStart = goal.trim().length > 0 && problems.length === 0
+  const unavailable = runWarnings(workflow, agents, downloads, mcpSetups).map((id) => packageById(id)?.name ?? id)
 
   return (
     <div className="run-panel" role="dialog" aria-label="Start a run">
@@ -50,6 +54,18 @@ function RunPanel() {
           {problem}
         </p>
       ))}
+      {unavailable.length > 0 && (
+        <p className="mono muted">
+          Not available to agents yet: {unavailable.join(', ')}.{' '}
+          <button
+            className="link"
+            type="button"
+            onClick={() => setUi({ runPanelOpen: false, settingsOpen: true })}
+          >
+            Set up
+          </button>
+        </p>
+      )}
       <div className="row">
         <span className="mono muted grow">
           {countOf(workflow.nodes.length, 'agent')} · limits cap it at {formatDollars(runSpendCeiling(workflow, agents))}

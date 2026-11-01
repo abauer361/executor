@@ -1,3 +1,5 @@
+import type { McpStoredSetup } from './mcpServers'
+
 export type PackageKind = 'mcp' | 'skill' | 'agent' | 'workflow'
 export type AgentStatus = 'active' | 'queued' | 'warning' | 'stopped' | 'idle'
 export type WorkflowStatus = 'active' | 'warning' | 'stopped' | 'completed'
@@ -86,6 +88,7 @@ export interface Workflow {
   runId?: string
   goal?: string
   outcome?: RunOutcome
+  approvals?: PendingApproval[]
 }
 
 export interface Project {
@@ -116,10 +119,17 @@ export interface CatalogPackage {
   workflow?: WorkflowTemplate
 }
 
+export interface McpCheckResult {
+  ok: boolean
+  tools?: number
+  message?: string
+}
+
 export interface DownloadRecord {
   packageId: string
   path: string
   downloadedAt: number
+  check?: McpCheckResult
 }
 
 export interface PickedDoc {
@@ -135,7 +145,20 @@ export interface RunNodeSpec {
   model: string
   limiter: Limiter
   instructions: string[]
+  mcpServers: string[]
+  skills: string[]
+  memory: MemoryDoc[]
 }
+
+export interface PendingApproval {
+  id: string
+  nodeId: string
+  agent: string
+  tool: string
+  input: string
+}
+
+export type ApprovalDecision = 'allow' | 'always' | 'deny'
 
 export interface RunRequest {
   runId: string
@@ -149,6 +172,8 @@ export type RunEvent =
   | { type: 'usage'; runId: string; nodeId: string; tokens: number; cost: number }
   | { type: 'output'; runId: string; nodeId: string; text: string }
   | { type: 'log'; runId: string; nodeId: string | null; agent: string; message: string }
+  | { type: 'approval'; runId: string; approval: PendingApproval }
+  | { type: 'approval-resolved'; runId: string; approvalId: string }
   | { type: 'end'; runId: string; outcome: RunOutcome; message?: string }
 
 export interface KeyResult {
@@ -171,5 +196,11 @@ export interface ExecutorBridge {
   startRun(request: RunRequest): Promise<void>
   stopRun(runId: string): Promise<void>
   injectInstruction(runId: string, nodeId: string, text: string): Promise<void>
+  resolveApproval(runId: string, approvalId: string, decision: ApprovalDecision): Promise<void>
+  getMcpSetups(): Promise<Record<string, McpStoredSetup>>
+  pickFolders(multiple: boolean): Promise<string[]>
+  saveMcpFolders(id: string, key: string, folders: string[]): Promise<void>
+  saveMcpSecret(id: string, key: string, value: string): Promise<void>
+  checkMcpServer(id: string): Promise<McpCheckResult>
   onRunEvent(listener: (event: RunEvent) => void): () => void
 }

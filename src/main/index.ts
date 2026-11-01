@@ -1,8 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, sep } from 'node:path'
-import type { CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
+import type { ApprovalDecision, CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
+import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
 import { createModelClient, verifyApiKey } from './anthropicClient'
+import { allServerSetups, saveFolders, saveServerSecret } from './mcpSetup'
 import { launchRun, type RunHandle } from './runEngine'
 import { hasApiKey, loadApiKey, removeApiKey, saveApiKey } from './secrets'
 
@@ -48,12 +50,16 @@ function registerIpc() {
 
   ipcMain.handle('library:download', async (_event, pkg: CatalogPackage) => {
     const path = packagePath(pkg)
+    if (pkg.kind === 'skill') await downloadSkill(pkg.id)
     const manifest = { ...pkg, downloadedAt: new Date().toISOString() }
     await writeAtomic(path, JSON.stringify(manifest, null, 2))
     return path
   })
 
-  ipcMain.handle('library:remove', (_event, pkg: CatalogPackage) => rm(packagePath(pkg), { force: true }))
+  ipcMain.handle('library:remove', async (_event, pkg: CatalogPackage) => {
+    if (pkg.kind === 'skill') await removeSkill(pkg.id)
+    await rm(packagePath(pkg), { force: true })
+  })
 
   ipcMain.handle('library:reveal', (_event, path: string) => {
     if (!path.startsWith(libraryRoot() + sep)) throw new Error('Path is outside the library')
@@ -94,7 +100,7 @@ function registerIpc() {
       emit({ type: 'end', runId: request.runId, outcome: 'failed', message: 'Add an Anthropic API key to run agents.' })
       return
     }
-    const handle = launchRun(request, createModelClient(key), emit)
+    const handle = launchRun(request, createModelClient(key), createAgentEnvironment(), emit)
     runs.set(request.runId, handle)
     void handle.done.finally(() => runs.delete(request.runId))
   })
@@ -103,6 +109,29 @@ function registerIpc() {
   ipcMain.handle('run:inject', (_event, runId: string, nodeId: string, text: string) =>
     runs.get(runId)?.inject(nodeId, text)
   )
+  ipcMain.handle('run:approve', (_event, runId: string, approvalId: string, decision: ApprovalDecision) =>
+    runs.get(runId)?.resolveApproval(approvalId, decision)
+  )
+
+  ipcMain.handle('mcp:setups', () => allServerSetups())
+  ipcMain.handle('mcp:check', (_event, id: string) => checkServer(id))
+  ipcMain.handle('mcp:save-folders', (_event, id: string, key: string, folders: string[]) =>
+    saveFolders(id, key, folders)
+  )
+  ipcMain.handle('mcp:save-secret', (_event, id: string, key: string, value: string) =>
+    saveServerSecret(id, key, value)
+  )
+  ipcMain.handle('mcp:pick-folders', async (event, multiple: boolean) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: 'Choose a folder',
+      properties: multiple ? (['openDirectory', 'multiSelections'] as const) : (['openDirectory'] as const)
+    }
+    const result = await (window
+      ? dialog.showOpenDialog(window, { ...options, properties: [...options.properties] })
+      : dialog.showOpenDialog({ ...options, properties: [...options.properties] }))
+    return result.canceled ? [] : result.filePaths
+  })
 }
 
 function createWindow() {

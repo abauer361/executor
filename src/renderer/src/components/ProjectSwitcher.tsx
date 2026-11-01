@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { Project } from '../../../shared/types'
 import { useApp } from '../store'
 import { countOf, workflowStatus } from '../usage'
 import { Icon, Kbd, StatusDot } from './ui'
+import { useEscape } from './useEscape'
 
 function projectStatus(project: Project) {
   const statuses = project.workflows.map(workflowStatus)
@@ -27,7 +28,8 @@ function SwitcherDialog() {
   const [name, setName] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
-  const close = () => setUi({ switcherOpen: false })
+  const close = useCallback(() => setUi({ switcherOpen: false }), [setUi])
+  useEscape(close)
 
   useEffect(() => searchRef.current?.focus(), [])
 
@@ -59,12 +61,7 @@ function SwitcherDialog() {
   }
 
   return (
-    <div
-      className="backdrop"
-      onMouseDown={close}
-      onKeyDown={(event) => event.key === 'Escape' && close()}
-      role="presentation"
-    >
+    <div className="backdrop" onMouseDown={close} role="presentation">
       <div className="dialog" role="dialog" aria-label="Projects" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-head">
           <div className="tile">

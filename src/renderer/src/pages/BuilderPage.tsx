@@ -5,6 +5,7 @@ import { bridge } from '../bridge'
 import { Icon, RobotFace } from '../components/ui'
 import { CATALOG, packageById } from '../data/catalog'
 import { MODELS } from '../data/models'
+import { serverState } from '../runState'
 import { useApp } from '../store'
 import { agentSummary } from '../usage'
 
@@ -254,7 +255,8 @@ function AttachButton({
 
 function AttachedList({ draft, field, emptyText }: { draft: Agent; field: 'mcpServers' | 'skills'; emptyText: string }) {
   const downloads = useApp((state) => state.downloads)
-  const { updateDraft } = useApp.getState()
+  const mcpSetups = useApp((state) => state.mcpSetups)
+  const { updateDraft, setUi } = useApp.getState()
   const ids = draft[field]
 
   if (ids.length === 0) return <p className="form-empty">{emptyText}</p>
@@ -269,6 +271,11 @@ function AttachedList({ draft, field, emptyText }: { draft: Agent; field: 'mcpSe
               <span className="row">
                 <span className="strong truncate">{pkg?.name ?? id}</span>
                 {!downloads[id] && <span className="badge badge-warning">Not downloaded</span>}
+                {field === 'mcpServers' && serverState(id, downloads, mcpSetups) === 'needs-setup' && (
+                  <button className="badge badge-warning" type="button" onClick={() => setUi({ settingsOpen: true })}>
+                    Needs setup
+                  </button>
+                )}
               </span>
               <span className="mono faint truncate">{pkg?.summary}</span>
             </span>

@@ -1,3 +1,4 @@
+import { installCommand } from '../../../shared/mcpServers'
 import type { AgentTemplate, CatalogPackage, PackageKind } from '../../../shared/types'
 
 const MCP_REPO = 'https://github.com/modelcontextprotocol/servers'
@@ -74,7 +75,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['files', 'local'],
     repo: MCP_REPO,
     transport: 'stdio',
-    install: 'npx -y @modelcontextprotocol/server-filesystem <path>'
+    install: installCommand('filesystem')
   },
   {
     id: 'github',
@@ -85,7 +86,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['github', 'code', 'ci'],
     repo: 'https://github.com/github/github-mcp-server',
     transport: 'stdio',
-    install: 'docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server'
+    install: installCommand('github')
   },
   {
     id: 'git',
@@ -96,7 +97,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['git', 'local'],
     repo: MCP_REPO,
     transport: 'stdio',
-    install: 'uvx mcp-server-git'
+    install: installCommand('git')
   },
   {
     id: 'fetch',
@@ -107,7 +108,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['web'],
     repo: MCP_REPO,
     transport: 'stdio',
-    install: 'uvx mcp-server-fetch'
+    install: installCommand('fetch')
   },
   {
     id: 'memory',
@@ -118,7 +119,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['memory'],
     repo: MCP_REPO,
     transport: 'stdio',
-    install: 'npx -y @modelcontextprotocol/server-memory'
+    install: installCommand('memory')
   },
   {
     id: 'sequential-thinking',
@@ -129,7 +130,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['reasoning'],
     repo: MCP_REPO,
     transport: 'stdio',
-    install: 'npx -y @modelcontextprotocol/server-sequential-thinking'
+    install: installCommand('sequential-thinking')
   },
   {
     id: 'time',
@@ -140,7 +141,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['utility'],
     repo: MCP_REPO,
     transport: 'stdio',
-    install: 'uvx mcp-server-time'
+    install: installCommand('time')
   },
   {
     id: 'playwright',
@@ -151,7 +152,7 @@ export const CATALOG: CatalogPackage[] = [
     tags: ['browser', 'testing'],
     repo: 'https://github.com/microsoft/playwright-mcp',
     transport: 'stdio',
-    install: 'npx @playwright/mcp@latest'
+    install: installCommand('playwright')
   },
   {
     id: 'mcp-builder',

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { RUNNABLE_MODELS } from '../../../../shared/pricing'
+import type { PendingApproval } from '../../../../shared/types'
 import { Icon, Kbd, RobotFace, StatusDot } from '../../components/ui'
 import { modelName } from '../../data/models'
 import { activeWorkflow, useApp, type BuilderSection } from '../../store'
@@ -25,6 +26,31 @@ function EditRow({
       {count !== undefined && <span className="chip">{count}</span>}
       <Icon name="chevron_right" size={14} />
     </button>
+  )
+}
+
+function ApprovalCard({ approval }: { approval: PendingApproval }) {
+  const { answerApproval } = useApp.getState()
+
+  return (
+    <section className="approval" aria-label="Approval needed">
+      <span className="eyebrow">Approval needed</span>
+      <p>
+        <span className="strong">{approval.agent}</span> wants to use <span className="mono strong">{approval.tool}</span>
+      </p>
+      <pre className="approval-input mono">{approval.input}</pre>
+      <div className="row">
+        <button className="btn btn-primary grow" type="button" onClick={() => answerApproval(approval.id, 'allow')}>
+          Allow
+        </button>
+        <button className="btn btn-secondary" type="button" onClick={() => answerApproval(approval.id, 'always')}>
+          Always This Run
+        </button>
+        <button className="btn btn-destructive" type="button" onClick={() => answerApproval(approval.id, 'deny')}>
+          Deny
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -69,6 +95,7 @@ export function Inspector() {
   const model = runnableModel(agent, node.data.activeModel) ?? node.data.activeModel
   const edit = (section: BuilderSection) => openBuilder(agent.id, section)
   const alreadyStarted = workflow.running && node.data.status !== 'queued'
+  const approvals = (workflow.approvals ?? []).filter((approval) => approval.nodeId === node.id)
   const canInject = instruction.trim().length > 0 && !alreadyStarted
 
   const send = () => {
@@ -81,6 +108,10 @@ export function Inspector() {
     <aside className="inspector">
       {head}
       <div className="inspector-body">
+        {approvals.map((approval) => (
+          <ApprovalCard key={approval.id} approval={approval} />
+        ))}
+
         <section className="panel">
           <div className="row">
             <div className="tile">

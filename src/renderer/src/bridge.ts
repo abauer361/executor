@@ -28,6 +28,12 @@ const browserPreview: ExecutorBridge = {
   },
   stopRun: async () => {},
   injectInstruction: async () => {},
+  resolveApproval: async () => {},
+  getMcpSetups: async () => ({}),
+  pickFolders: async () => [],
+  saveMcpFolders: async () => {},
+  saveMcpSecret: async () => {},
+  checkMcpServer: async () => ({ ok: false, message: 'MCP servers need the desktop app.' }),
   onRunEvent: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

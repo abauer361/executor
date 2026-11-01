@@ -1,8 +1,10 @@
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type NodeChange } from '@xyflow/react'
 import { create } from 'zustand'
+import type { McpStoredSetup } from '../../shared/mcpServers'
 import type {
   Agent,
   AgentTemplate,
+  ApprovalDecision,
   CatalogPackage,
   DownloadRecord,
   KeyResult,
@@ -15,7 +17,7 @@ import type {
 import { bridge } from './bridge'
 import { packageById, PREINSTALLED } from './data/catalog'
 import { createSeed } from './data/seed'
-import { buildRunRequest, prepareRun, reduceRunEvent } from './runState'
+import { buildRunRequest, prepareRun, reduceRunEvent, serverState } from './runState'
 import { appendLog, logEntry, sampleCost } from './usage'
 
 export type Page = 'canvas' | 'builder' | 'marketplace'
@@ -38,6 +40,8 @@ interface Persisted {
 interface AppState extends Persisted {
   hydrated: boolean
   hasApiKey: boolean
+  mcpSetups: Record<string, McpStoredSetup>
+  mcpChecking: string[]
   page: Page
   drawerTab: 'workflows' | 'agents'
   drawerOpen: boolean
@@ -56,6 +60,9 @@ interface AppState extends Persisted {
   setTheme(theme: Theme): void
   saveApiKey(key: string): Promise<KeyResult>
   removeApiKey(): Promise<void>
+  saveMcpFolders(id: string, key: string, folders: string[]): Promise<void>
+  saveMcpSecret(id: string, key: string, value: string): Promise<void>
+  checkMcpServer(id: string): Promise<void>
 
   selectProject(id: string): void
   addProject(name: string): void
@@ -70,6 +77,7 @@ interface AppState extends Persisted {
   beginRun(goal: string): void
   stopRun(): void
   applyRunEvent(event: RunEvent): void
+  answerApproval(approvalId: string, decision: ApprovalDecision): void
   inject(nodeId: string, text: string): void
   setNodeModel(nodeId: string, model: string): void
 
@@ -208,6 +216,8 @@ function layeredPositions(workflow: Workflow) {
 export const useApp = create<AppState>((set, get) => ({
   hydrated: false,
   hasApiKey: false,
+  mcpSetups: {},
+  mcpChecking: [],
   projects: [],
   agents: [],
   downloads: {},
@@ -226,7 +236,10 @@ export const useApp = create<AppState>((set, get) => ({
   builderSection: null,
 
   async hydrate() {
-    set({ hasApiKey: await bridge.hasApiKey().catch(() => false) })
+    set({
+      hasApiKey: await bridge.hasApiKey().catch(() => false),
+      mcpSetups: await bridge.getMcpSetups().catch(() => ({}))
+    })
     const saved = await bridge.loadState()
     if (saved) {
       try {
@@ -273,6 +286,29 @@ export const useApp = create<AppState>((set, get) => ({
   async removeApiKey() {
     await bridge.removeApiKey()
     set({ hasApiKey: false })
+  },
+
+  async saveMcpFolders(id, key, folders) {
+    await bridge.saveMcpFolders(id, key, folders)
+    set({ mcpSetups: await bridge.getMcpSetups() })
+    await get().checkMcpServer(id)
+  },
+
+  async saveMcpSecret(id, key, value) {
+    await bridge.saveMcpSecret(id, key, value)
+    set({ mcpSetups: await bridge.getMcpSetups() })
+    await get().checkMcpServer(id)
+  },
+
+  async checkMcpServer(id) {
+    set((state) => ({ mcpChecking: [...state.mcpChecking, id] }))
+    const check = await bridge.checkMcpServer(id)
+    set((state) => ({
+      mcpChecking: state.mcpChecking.filter((candidate) => candidate !== id),
+      downloads: state.downloads[id]
+        ? { ...state.downloads, [id]: { ...state.downloads[id], check } }
+        : state.downloads
+    }))
   },
 
   selectProject: (id) => set({ activeProjectId: id, switcherOpen: false }),
@@ -370,7 +406,8 @@ export const useApp = create<AppState>((set, get) => ({
     set((state) => ({
       inspectorOpen:
         state.inspectorOpen ||
-        (event.type === 'end' && event.outcome === 'completed' && activeWorkflow(state).runId === event.runId),
+        (activeWorkflow(state).runId === event.runId &&
+          (event.type === 'approval' || (event.type === 'end' && event.outcome === 'completed'))),
       projects: state.projects.map((project) => ({
         ...project,
         workflows: project.workflows.map((workflow) =>
@@ -379,7 +416,12 @@ export const useApp = create<AppState>((set, get) => ({
       }))
     })),
 
-  // Agents make one model call each, so an instruction can only reach one that has not started.
+  answerApproval(approvalId, decision) {
+    const { runId } = activeWorkflow(get())
+    if (runId) void bridge.resolveApproval(runId, approvalId, decision)
+  },
+
+  // Instructions join an agent's opening message, so they can only reach one that has not started.
   inject(nodeId, text) {
     const state = get()
     const current = activeWorkflow(state)
@@ -480,6 +522,9 @@ export const useApp = create<AppState>((set, get) => ({
         ? [...state.agents, agentFromTemplate(pkg.agent, `pkg-${pkg.id}`, pkg.id)]
         : state.agents
     }))
+    if (pkg.kind === 'mcp' && serverState(pkg.id, get().downloads, get().mcpSetups) === 'ready') {
+      await get().checkMcpServer(pkg.id)
+    }
   },
 
   async removePackage(pkg) {

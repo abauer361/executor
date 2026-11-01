@@ -19,7 +19,7 @@ const browserPreview: ExecutorBridge = {
   revealPath: async () => {},
   pickDocs: async () => [],
   openExternal: async (url) => void window.open(url, '_blank'),
-  hasApiKey: async () => false,
+  apiKeyStatus: async () => ({ anthropic: false, openai: false, google: false }),
   saveApiKey: async () => ({ ok: false, message: 'API keys need the desktop app.' }),
   removeApiKey: async () => {},
   startRun: async ({ runId }) => {
@@ -34,6 +34,12 @@ const browserPreview: ExecutorBridge = {
   saveMcpFolders: async () => {},
   saveMcpSecret: async () => {},
   checkMcpServer: async () => ({ ok: false, message: 'MCP servers need the desktop app.' }),
+  searchRegistry: async () => ({ entries: [], nextCursor: null }),
+  installRegistryServer: async () => {
+    throw new Error('MCP servers need the desktop app.')
+  },
+  removeRegistryServer: async () => {},
+  getRegistryServers: async () => ({}),
   onRunEvent: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

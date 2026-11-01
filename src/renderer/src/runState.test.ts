@@ -61,14 +61,14 @@ describe('budgetShare', () => {
 })
 
 describe('runnableModel', () => {
-  const pool = agent({ models: ['gpt-4o', 'claude-haiku-5-5', 'claude-sonnet-5-5'] })
+  const pool = agent({ models: ['deepseek-r1', 'claude-haiku-5-5', 'claude-sonnet-5-5'] })
 
   it('prefers the model picked in the Inspector', () => {
     expect(runnableModel(pool, 'claude-sonnet-5-5')).toBe('claude-sonnet-5-5')
   })
 
   it('falls back to the first Claude model', () => {
-    expect(runnableModel(pool, 'gpt-4o')).toBe('claude-haiku-5-5')
+    expect(runnableModel(pool, 'deepseek-r1')).toBe('claude-haiku-5-5')
   })
 
   it('ignores a picked model that left the pool', () => {
@@ -76,7 +76,7 @@ describe('runnableModel', () => {
   })
 
   it('reports when no connected model is available', () => {
-    expect(runnableModel(agent({ models: ['gpt-4o'] }), 'gpt-4o')).toBeNull()
+    expect(runnableModel(agent({ models: ['deepseek-r1'] }), 'deepseek-r1')).toBeNull()
   })
 })
 
@@ -90,7 +90,14 @@ describe('runProblems', () => {
   })
 
   it('names an agent with no Claude model', () => {
-    expect(runProblems(workflow([node('a')]), [agent({ models: ['gpt-4o'] })])[0]).toContain('Agent needs a Claude model')
+    expect(runProblems(workflow([node('a')]), [agent({ models: ['deepseek-r1'] })])[0]).toContain('no connected model')
+  })
+
+  it('names the key a model needs', () => {
+    const keys = { anthropic: true, openai: false, google: true }
+    const gpt = node('a')
+    gpt.data.activeModel = 'gpt-6.1-sol'
+    expect(runProblems(workflow([gpt]), [agent({ models: ['gpt-6.1-sol'] })], keys)[0]).toContain('your OpenAI API key')
   })
 
   it('passes a runnable workflow', () => {
@@ -159,6 +166,35 @@ describe('approvals', () => {
   it('clears unanswered approvals when the run ends', () => {
     const waiting = reduceRunEvent(started, { type: 'approval', runId: 'r', approval })
     expect(reduceRunEvent(waiting, { type: 'end', runId: 'r', outcome: 'stopped' }).approvals).toEqual([])
+  })
+})
+
+describe('routing', () => {
+  const pool = ['claude-haiku-5-5', 'claude-opus-5-5', 'gpt-6.1-sol']
+  const auto = () => {
+    const routed = node('a')
+    routed.data.activeModel = 'auto'
+    return routed
+  }
+
+  it('routes among the Claude models in the pool', () => {
+    const request = buildRunRequest(workflow([auto()]), [agent({ models: pool })], 'Goal', 'r')
+    expect(request.nodes[0].routeAmong).toEqual(['claude-haiku-5-5', 'claude-opus-5-5'])
+  })
+
+  it('does not route when a specific model is picked', () => {
+    expect(buildRunRequest(workflow([node('a')]), [agent({ models: pool })], 'Goal', 'r').nodes[0].routeAmong).toBeUndefined()
+  })
+
+  it('caps spending at the most expensive model routing could pick', () => {
+    expect(runSpendCeiling(workflow([auto()]), [agent({ models: pool })])).toBeCloseTo(2)
+  })
+
+  it('records the chosen model and clears it for the next run', () => {
+    const started = prepareRun(workflow([auto()]), 'Goal', 'r')
+    const routed = reduceRunEvent(started, { type: 'model', runId: 'r', nodeId: 'a', model: 'claude-opus-5-5' })
+    expect(routed.nodes[0].data.routedModel).toBe('claude-opus-5-5')
+    expect(prepareRun(routed, 'Goal', 'r2').nodes[0].data.routedModel).toBeUndefined()
   })
 })
 

@@ -1,4 +1,9 @@
+import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -8,7 +13,7 @@ import { mergePaths } from './shellPath'
 
 const fixture = join(__dirname, 'fixtures/testMcpServer.mjs')
 const folder = mkdtempSync(join(tmpdir(), 'executor-mcp-'))
-const launch = { command: process.execPath, args: [fixture, folder], env: {} }
+const launch = { transport: 'stdio' as const, command: process.execPath, args: [fixture, folder], env: {} }
 const signal = new AbortController().signal
 
 describe('a real MCP server over stdio', () => {
@@ -18,7 +23,7 @@ describe('a real MCP server over stdio', () => {
   beforeAll(async () => {
     process.env.ANTHROPIC_API_KEY = 'must-not-reach-servers'
     writeFileSync(join(folder, 'hello.txt'), 'Hello from a file')
-    connection = await openConnection('notes', launch, process.env.PATH ?? '')
+    connection = await openConnection('notes', launch, { path: process.env.PATH ?? '' })
   })
 
   afterAll(async () => {
@@ -66,15 +71,31 @@ describe('a real MCP server over stdio', () => {
 describe('starting a server', () => {
   it('explains a missing command', async () => {
     await expect(
-      openConnection('x', { command: 'executor-no-such-command', args: [], env: {} }, '/usr/bin')
+      openConnection('x', { transport: 'stdio', command: 'executor-no-such-command', args: [], env: {} }, { path: '/usr/bin' })
     ).rejects.toThrow('executor-no-such-command is not installed')
   })
 
   it('reports why a server stopped during startup', async () => {
     const script = "console.error('Cannot connect to the Docker daemon'); process.exit(1)"
     await expect(
-      openConnection('x', { command: process.execPath, args: ['-e', script], env: {} }, process.env.PATH ?? '')
+      openConnection(
+        'x',
+        { transport: 'stdio', command: process.execPath, args: ['-e', script], env: {} },
+        { path: process.env.PATH ?? '' }
+      )
     ).rejects.toThrow('Docker is not running')
+  })
+
+  it('asks for approval on every tool from an untrusted server', async () => {
+    const untrusted = await openConnection('notes', launch, { path: process.env.PATH ?? '', trustHints: false })
+    expect(untrusted.tools.every((tool) => tool.needsApproval)).toBe(true)
+    await untrusted.close()
+  })
+
+  it('labels tools with the name shown to you', async () => {
+    const labelled = await openConnection('reg-1', launch, { path: process.env.PATH ?? '', label: 'Weather' })
+    expect(labelled.tools[0].label).toBe('Weather read_note')
+    await labelled.close()
   })
 
   it('leaves no file behind when a server never starts', () => {
@@ -82,22 +103,84 @@ describe('starting a server', () => {
   })
 })
 
+describe('a remote MCP server over HTTP', () => {
+  let http: Server
+  let url: string
+
+  beforeAll(async () => {
+    http = createServer(async (request, response) => {
+      if (request.headers.authorization !== 'Bearer good') {
+        response.writeHead(401).end()
+        return
+      }
+      const server = new McpServer({ name: 'remote', version: '1.0.0' }, { capabilities: { tools: {} } })
+      server.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: [
+          {
+            name: 'search',
+            description: 'Search.',
+            inputSchema: { type: 'object', properties: {} },
+            annotations: { readOnlyHint: true }
+          }
+        ]
+      }))
+      server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [{ type: 'text', text: 'from remote' }] }))
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
+      await server.connect(transport)
+      await transport.handleRequest(request, response)
+    })
+    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', () => resolve()))
+    url = `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`
+  })
+
+  afterAll(() => http.close())
+
+  it('connects, lists tools and calls them', async () => {
+    const remote = await openConnection(
+      'reg-1',
+      { transport: 'http', url, headers: { Authorization: 'Bearer good' } },
+      { path: '', label: 'Docs', trustHints: false }
+    )
+    expect(remote.tools[0].label).toBe('Docs search')
+    expect(await remote.tools[0].call({}, signal)).toEqual({ isError: false, content: [{ type: 'text', text: 'from remote' }] })
+    await remote.close()
+  })
+
+  it('does not trust a remote server that claims its tools are read-only', async () => {
+    const remote = await openConnection(
+      'reg-1',
+      { transport: 'http', url, headers: { Authorization: 'Bearer good' } },
+      { path: '', trustHints: false }
+    )
+    expect(remote.tools[0].needsApproval).toBe(true)
+    await remote.close()
+  })
+
+  it('explains a server that needs an account', async () => {
+    await expect(openConnection('reg-1', { transport: 'http', url, headers: {} }, { path: '' })).rejects.toThrow(
+      'needs an account or key'
+    )
+  })
+})
+
 describe('server definitions', () => {
   it('passes folders as positional arguments or flags', () => {
     const files = buildLaunch(MCP_SERVERS.filesystem, { folders: ['/a', '/b'] }, {}, '/data')
-    expect(files.args.slice(-2)).toEqual(['/a', '/b'])
+    expect(files).toMatchObject({ args: expect.arrayContaining(['/a', '/b']) })
     const git = buildLaunch(MCP_SERVERS.git, { repository: ['/repo'] }, {}, '/data')
-    expect(git.args.slice(-2)).toEqual(['--repository', '/repo'])
+    expect(git).toMatchObject({ args: expect.arrayContaining(['--repository', '/repo']) })
   })
 
   it('passes secrets only through the environment', () => {
     const github = buildLaunch(MCP_SERVERS.github, {}, { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_x' }, '/data')
-    expect(github.env.GITHUB_PERSONAL_ACCESS_TOKEN).toBe('ghp_x')
-    expect(github.args.join(' ')).not.toContain('ghp_x')
+    expect(github).toMatchObject({ env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_x' } })
+    expect(JSON.stringify({ ...github, env: {} })).not.toContain('ghp_x')
   })
 
   it('stores agent memory in the app data folder', () => {
-    expect(buildLaunch(MCP_SERVERS.memory, {}, {}, '/data').env.MEMORY_FILE_PATH).toBe('/data/mcp-memory.jsonl')
+    expect(buildLaunch(MCP_SERVERS.memory, {}, {}, '/data')).toMatchObject({
+      env: { MEMORY_FILE_PATH: '/data/mcp-memory.jsonl' }
+    })
   })
 
   it('finds settings that are still missing', () => {

@@ -1,4 +1,4 @@
-export type McpSettingKind = 'folders' | 'folder' | 'secret'
+export type McpSettingKind = 'folders' | 'folder' | 'secret' | 'header'
 
 export interface McpSetting {
   key: string
@@ -14,13 +14,14 @@ export interface McpServerSpec {
   args: string[]
   settings: McpSetting[]
   dataFileEnv?: { name: string; file: string }
+  remoteUrl?: string
+  // Registry servers are unreviewed, so their claims about their own tools are ignored.
+  trustHints?: boolean
 }
 
-export interface McpLaunch {
-  command: string
-  args: string[]
-  env: Record<string, string>
-}
+export type McpLaunch =
+  | { transport: 'stdio'; command: string; args: string[]; env: Record<string, string> }
+  | { transport: 'http'; url: string; headers: Record<string, string> }
 
 // The only commands the app will run. The interface passes a server id, never a command.
 export const MCP_SERVERS: Record<string, McpServerSpec> = {
@@ -67,9 +68,11 @@ export interface McpStoredSetup {
 
 export const emptySetup = (): McpStoredSetup => ({ folders: {}, secrets: [] })
 
+export const isSecretSetting = (setting: McpSetting) => setting.kind === 'secret' || setting.kind === 'header'
+
 export function missingSettings(spec: McpServerSpec, setup: McpStoredSetup) {
   return spec.settings.filter((setting) =>
-    setting.kind === 'secret' ? !setup.secrets.includes(setting.key) : !setup.folders[setting.key]?.length
+    isSecretSetting(setting) ? !setup.secrets.includes(setting.key) : !setup.folders[setting.key]?.length
   )
 }
 
@@ -79,24 +82,26 @@ export function buildLaunch(
   secrets: Record<string, string>,
   dataDirectory: string
 ): McpLaunch {
+  if (spec.remoteUrl) return { transport: 'http', url: spec.remoteUrl, headers: secrets }
+
   const args = [...spec.args]
   const env: Record<string, string> = { ...secrets }
 
   for (const setting of spec.settings) {
-    if (setting.kind === 'secret') continue
+    if (isSecretSetting(setting)) continue
     for (const folder of folders[setting.key] ?? []) {
       args.push(...(setting.flag ? [setting.flag, folder] : [folder]))
     }
   }
   if (spec.dataFileEnv) env[spec.dataFileEnv.name] = `${dataDirectory}/${spec.dataFileEnv.file}`
 
-  return { command: spec.command, args, env }
+  return { transport: 'stdio', command: spec.command, args, env }
 }
 
 export function installCommand(id: string) {
   const spec = MCP_SERVERS[id]
   const placeholders = spec.settings.flatMap((setting) => {
-    if (setting.kind === 'secret') return []
+    if (isSecretSetting(setting)) return []
     return setting.flag ? [setting.flag, '<folder>'] : ['<folder>']
   })
   return [spec.command, ...spec.args, ...placeholders].join(' ')
@@ -115,5 +120,5 @@ interface ToolHints {
 }
 
 // Runs without asking only if it is declared read-only and cannot reach outside this Mac.
-export const toolNeedsApproval = (hints: ToolHints | undefined) =>
-  hints?.readOnlyHint !== true || hints.openWorldHint === true
+export const toolNeedsApproval = (hints: ToolHints | undefined, trustHints = true) =>
+  !trustHints || hints?.readOnlyHint !== true || hints.openWorldHint === true

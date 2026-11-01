@@ -2,7 +2,7 @@ import type { Agent, AgentStatus, LogEntry, Project, Workflow, WorkflowNode } fr
 import { sampleCost } from '../usage'
 
 const MINUTE = 60_000
-const DEFAULT_MODELS = ['claude-sonnet-5-5', 'gpt-4o', 'gemini-2-0-flash']
+const DEFAULT_MODELS = ['claude-sonnet-5-5', 'gpt-6.1-sol', 'gemini-3.8-flash']
 
 const agent = (
   id: string,

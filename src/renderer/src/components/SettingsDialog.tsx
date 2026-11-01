@@ -1,7 +1,9 @@
 import { useCallback, useState } from 'react'
-import { MCP_SERVERS, type McpSetting } from '../../../shared/mcpServers'
+import { isSecretSetting, type McpSetting } from '../../../shared/mcpServers'
+import { PROVIDER_LABEL, type Provider } from '../../../shared/pricing'
 import { bridge } from '../bridge'
 import { packageById } from '../data/catalog'
+import { serverSpec } from '../runState'
 import { useApp } from '../store'
 import { countOf } from '../usage'
 import { Icon, Kbd } from './ui'
@@ -96,16 +98,17 @@ function SecretSetting({ id, setting }: { id: string; setting: McpSetting }) {
 function ServerSettings({ id }: { id: string }) {
   const check = useApp((state) => state.downloads[id]?.check)
   const checking = useApp((state) => state.mcpChecking.includes(id))
+  const registry = useApp((state) => state.registryServers)
 
   return (
     <div className="server-settings">
       <div className="row">
-        <span className="strong grow">{packageById(id)?.name ?? id}</span>
+        <span className="strong grow">{packageById(id, registry)?.name ?? id}</span>
         {checking && <span className="mono faint">Starting</span>}
         {!checking && check?.ok && <span className="mono muted">{countOf(check.tools ?? 0, 'tool')}</span>}
       </div>
-      {MCP_SERVERS[id].settings.map((setting) =>
-        setting.kind === 'secret' ? (
+      {serverSpec(id, registry)?.settings.map((setting) =>
+        isSecretSetting(setting) ? (
           <SecretSetting key={setting.key} id={id} setting={setting} />
         ) : (
           <FolderSetting key={setting.key} id={id} setting={setting} />
@@ -116,23 +119,26 @@ function ServerSettings({ id }: { id: string }) {
   )
 }
 
-function SettingsPanel() {
-  const hasApiKey = useApp((state) => state.hasApiKey)
-  const downloads = useApp((state) => state.downloads)
-  const { saveApiKey, removeApiKey, setUi } = useApp.getState()
-  const configurable = Object.keys(MCP_SERVERS).filter((id) => downloads[id] && MCP_SERVERS[id].settings.length > 0)
+const KEY_PAGES: Record<Provider, { name: string; url: string }> = {
+  anthropic: { name: 'Claude Console', url: 'https://platform.claude.com/settings/keys' },
+  openai: { name: 'OpenAI dashboard', url: 'https://platform.openai.com/api-keys' },
+  google: { name: 'Google AI Studio', url: 'https://aistudio.google.com/apikey' }
+}
+
+function ProviderKey({ provider, autoFocus }: { provider: Provider; autoFocus: boolean }) {
+  const saved = useApp((state) => state.apiKeys[provider])
+  const { saveApiKey, removeApiKey } = useApp.getState()
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-
-  const close = useCallback(() => setUi({ settingsOpen: false }), [setUi])
-  useEscape(close)
+  const label = PROVIDER_LABEL[provider]
+  const page = KEY_PAGES[provider]
 
   const save = async () => {
     setBusy(true)
     setError('')
     try {
-      const result = await saveApiKey(key.trim())
+      const result = await saveApiKey(provider, key.trim())
       if (result.ok) setKey('')
       else setError(result.message ?? 'That key did not work.')
     } catch (cause) {
@@ -141,6 +147,54 @@ function SettingsPanel() {
       setBusy(false)
     }
   }
+
+  return (
+    <div className="provider-key">
+      <div className="row">
+        <span className="strong grow">{label}</span>
+        {saved ? (
+          <>
+            <span className="mono muted">Saved and encrypted</span>
+            <button className="btn btn-destructive btn-mini" type="button" onClick={() => void removeApiKey(provider)}>
+              Remove
+            </button>
+          </>
+        ) : (
+          <button className="link mono" type="button" onClick={() => void bridge.openExternal(page.url)}>
+            Create a key
+          </button>
+        )}
+      </div>
+      <div className="row">
+        <input
+          autoFocus={autoFocus}
+          className="input"
+          type="password"
+          value={key}
+          placeholder={saved ? 'Paste a new key to replace it' : 'Paste your API key'}
+          aria-label={`${label} API key`}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => setKey(event.target.value)}
+          onKeyDown={(event) => event.key === 'Enter' && key.trim() && void save()}
+        />
+        <button className="btn btn-primary" type="button" disabled={busy || !key.trim()} onClick={() => void save()}>
+          {busy ? 'Checking' : 'Save Key'}
+        </button>
+      </div>
+      {error && <p className="mono package-error">{error}</p>}
+    </div>
+  )
+}
+
+function SettingsPanel() {
+  const downloads = useApp((state) => state.downloads)
+  const registry = useApp((state) => state.registryServers)
+  const { setUi } = useApp.getState()
+  const configurable = Object.keys(downloads).filter((id) => (serverSpec(id, registry)?.settings.length ?? 0) > 0)
+
+  const close = useCallback(() => setUi({ settingsOpen: false }), [setUi])
+  useEscape(close)
 
   return (
     <div className="backdrop" onMouseDown={close} role="presentation">
@@ -157,43 +211,14 @@ function SettingsPanel() {
         </div>
 
         <div className="settings-body">
-          <span className="eyebrow">Anthropic API key</span>
-          {hasApiKey && (
-            <div className="row">
-              <Icon name="check" size={15} />
-              <span className="grow">A key is saved, encrypted in your Mac's keychain.</span>
-              <button className="btn btn-destructive" type="button" onClick={() => void removeApiKey()}>
-                Remove
-              </button>
-            </div>
-          )}
-
+          <span className="eyebrow">Model providers</span>
           <p className="muted">
-            Agents run through your own Anthropic account, and runs are billed there. Create a key on the{' '}
-            <button className="link" type="button" onClick={() => void bridge.openExternal(KEYS_PAGE)}>
-              Claude Console
-            </button>
-            .
+            Agents run through your own accounts, and runs are billed there. Keys are checked with the provider, then
+            encrypted in your Mac's keychain.
           </p>
-
-          <div className="row">
-            <input
-              autoFocus
-              className="input"
-              type="password"
-              value={key}
-              placeholder={hasApiKey ? 'Paste a new key to replace it' : 'Paste your API key'}
-              aria-label="Anthropic API key"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setKey(event.target.value)}
-              onKeyDown={(event) => event.key === 'Enter' && key.trim() && void save()}
-            />
-            <button className="btn btn-primary" type="button" disabled={busy || !key.trim()} onClick={() => void save()}>
-              {busy ? 'Checking' : 'Save Key'}
-            </button>
-          </div>
-          {error && <p className="mono package-error">{error}</p>}
+          <ProviderKey provider="anthropic" autoFocus />
+          <ProviderKey provider="openai" autoFocus={false} />
+          <ProviderKey provider="google" autoFocus={false} />
 
           {configurable.length > 0 && (
             <>

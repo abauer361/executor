@@ -1,12 +1,14 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, sep } from 'node:path'
+import type { Provider } from '../shared/pricing'
 import type { ApprovalDecision, CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
-import { createModelClient, verifyApiKey } from './anthropicClient'
-import { allServerSetups, saveFolders, saveServerSecret } from './mcpSetup'
+import { createModelClient, verifyApiKey } from './modelClients'
+import { allServerSetups, removeServerSecrets, saveFolders, saveServerSecret } from './mcpSetup'
+import { installedServers, installServer, removeServer, searchRegistry } from './registry'
 import { launchRun, type RunHandle } from './runEngine'
-import { hasApiKey, loadApiKey, removeApiKey, saveApiKey } from './secrets'
+import { apiKeyStatus, loadApiKeys, removeApiKey, saveApiKey } from './secrets'
 
 const KINDS = new Set(['mcp', 'skill', 'agent', 'workflow'])
 const runs = new Map<string, RunHandle>()
@@ -82,11 +84,11 @@ function registerIpc() {
     if (isWebUrl(url)) await shell.openExternal(url)
   })
 
-  ipcMain.handle('key:status', () => hasApiKey())
-  ipcMain.handle('key:remove', () => removeApiKey())
-  ipcMain.handle('key:save', async (_event, key: string): Promise<KeyResult> => {
-    const result = await verifyApiKey(key)
-    if (result.ok) await saveApiKey(key)
+  ipcMain.handle('key:status', () => apiKeyStatus())
+  ipcMain.handle('key:remove', (_event, provider: Provider) => removeApiKey(provider))
+  ipcMain.handle('key:save', async (_event, provider: Provider, key: string): Promise<KeyResult> => {
+    const result = await verifyApiKey(provider, key)
+    if (result.ok) await saveApiKey(provider, key)
     return result
   })
 
@@ -95,12 +97,7 @@ function registerIpc() {
     const emit = (runEvent: RunEvent) => {
       if (!sender.isDestroyed()) sender.send('run:event', runEvent)
     }
-    const key = await loadApiKey()
-    if (!key) {
-      emit({ type: 'end', runId: request.runId, outcome: 'failed', message: 'Add an Anthropic API key to run agents.' })
-      return
-    }
-    const handle = launchRun(request, createModelClient(key), createAgentEnvironment(), emit)
+    const handle = launchRun(request, createModelClient(await loadApiKeys()), createAgentEnvironment(), emit)
     runs.set(request.runId, handle)
     void handle.done.finally(() => runs.delete(request.runId))
   })
@@ -112,6 +109,15 @@ function registerIpc() {
   ipcMain.handle('run:approve', (_event, runId: string, approvalId: string, decision: ApprovalDecision) =>
     runs.get(runId)?.resolveApproval(approvalId, decision)
   )
+
+  ipcMain.handle('registry:search', (_event, query: string, cursor?: string) => searchRegistry(query, cursor))
+  ipcMain.handle('registry:servers', () => installedServers())
+  ipcMain.handle('registry:install', (_event, name: string, version: string) => installServer(name, version))
+  ipcMain.handle('registry:remove', async (_event, id: string) => {
+    const server = (await installedServers())[id]
+    if (server) await removeServerSecrets(server.spec)
+    await removeServer(id)
+  })
 
   ipcMain.handle('mcp:setups', () => allServerSetups())
   ipcMain.handle('mcp:check', (_event, id: string) => checkServer(id))

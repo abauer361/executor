@@ -1,4 +1,6 @@
 import type { McpStoredSetup } from './mcpServers'
+import type { Provider } from './pricing'
+import type { InstalledRegistryServer, RegistryEntry } from './registry'
 
 export type PackageKind = 'mcp' | 'skill' | 'agent' | 'workflow'
 export type AgentStatus = 'active' | 'queued' | 'warning' | 'stopped' | 'idle'
@@ -45,6 +47,7 @@ export type NodeRun = {
   tokensUsed: number
   costUsed: number
   activeModel: string
+  routedModel?: string
   output?: string
   instructions?: string[]
 }
@@ -143,6 +146,7 @@ export interface RunNodeSpec {
   name: string
   prompt: string
   model: string
+  routeAmong?: string[]
   limiter: Limiter
   instructions: string[]
   mcpServers: string[]
@@ -170,6 +174,7 @@ export interface RunRequest {
 export type RunEvent =
   | { type: 'node'; runId: string; nodeId: string; status: AgentStatus; task: string }
   | { type: 'usage'; runId: string; nodeId: string; tokens: number; cost: number }
+  | { type: 'model'; runId: string; nodeId: string; model: string }
   | { type: 'output'; runId: string; nodeId: string; text: string }
   | { type: 'log'; runId: string; nodeId: string | null; agent: string; message: string }
   | { type: 'approval'; runId: string; approval: PendingApproval }
@@ -190,9 +195,9 @@ export interface ExecutorBridge {
   revealPath(path: string): Promise<void>
   pickDocs(): Promise<PickedDoc[]>
   openExternal(url: string): Promise<void>
-  hasApiKey(): Promise<boolean>
-  saveApiKey(key: string): Promise<KeyResult>
-  removeApiKey(): Promise<void>
+  apiKeyStatus(): Promise<Record<Provider, boolean>>
+  saveApiKey(provider: Provider, key: string): Promise<KeyResult>
+  removeApiKey(provider: Provider): Promise<void>
   startRun(request: RunRequest): Promise<void>
   stopRun(runId: string): Promise<void>
   injectInstruction(runId: string, nodeId: string, text: string): Promise<void>
@@ -202,5 +207,9 @@ export interface ExecutorBridge {
   saveMcpFolders(id: string, key: string, folders: string[]): Promise<void>
   saveMcpSecret(id: string, key: string, value: string): Promise<void>
   checkMcpServer(id: string): Promise<McpCheckResult>
+  searchRegistry(query: string, cursor?: string): Promise<{ entries: RegistryEntry[]; nextCursor: string | null }>
+  installRegistryServer(name: string, version: string): Promise<InstalledRegistryServer>
+  removeRegistryServer(id: string): Promise<void>
+  getRegistryServers(): Promise<Record<string, InstalledRegistryServer>>
   onRunEvent(listener: (event: RunEvent) => void): () => void
 }

@@ -1,4 +1,3 @@
-import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages'
 import { outputAllowance, usageCost, usageTokens, type TokenUsage } from '../shared/pricing'
 import { incomingByNode } from '../shared/runGraph'
 import type { AgentStatus, ApprovalDecision, RunEvent, RunNodeSpec, RunOutcome, RunRequest } from '../shared/types'
@@ -53,10 +52,10 @@ export interface AgentEnvironment {
   close(): Promise<void>
 }
 
-export interface ModelPrompt {
+export interface ModelSessionConfig {
   model: string
   system: string
-  messages: BetaMessageParam[]
+  userMessage: string
   tools: AgentTool[]
 }
 
@@ -75,22 +74,43 @@ export interface ModelToolUse {
   input: unknown
 }
 
-export interface ModelResult {
-  content: BetaContentBlockParam[]
+export interface ToolResult {
+  id: string
+  name: string
+  isError: boolean
+  content: ToolResultContent[]
+}
+
+export interface ModelTurn {
   text: string
   toolUses: ModelToolUse[]
   stopReason: string | null
   usage: ModelUsage[]
 }
 
+export interface ModelChoiceRequest {
+  goal: string
+  agent: string
+  prompt: string
+  candidates: string[]
+}
+
+export interface ModelChoice {
+  model: string
+  reason: string
+  usage: ModelUsage[]
+}
+
+// One agent's conversation. Each provider keeps its own history, including thinking and reasoning.
+export interface ModelSession {
+  countInputTokens(signal: AbortSignal): Promise<number>
+  turn(maxTokens: number, signal: AbortSignal, onProgress: (progress: ModelProgress) => void): Promise<ModelTurn>
+  addToolResults(results: ToolResult[]): void
+}
+
 export interface ModelClient {
-  countInputTokens(prompt: ModelPrompt, signal: AbortSignal): Promise<number>
-  stream(
-    prompt: ModelPrompt,
-    maxTokens: number,
-    signal: AbortSignal,
-    onProgress: (progress: ModelProgress) => void
-  ): Promise<ModelResult>
+  chooseModel(request: ModelChoiceRequest, signal: AbortSignal): Promise<ModelChoice>
+  startSession(config: ModelSessionConfig): ModelSession
 }
 
 // An error that every agent would hit, such as a rejected API key.
@@ -140,11 +160,11 @@ export function buildUserMessage(goal: string, upstream: { name: string; output:
   return sections.join('\n\n')
 }
 
-const errorResult = (id: string, text: string): BetaContentBlockParam => ({
-  type: 'tool_result',
-  tool_use_id: id,
-  is_error: true,
-  content: text
+const errorResult = ({ id, name }: ModelToolUse, text: string): ToolResult => ({
+  id,
+  name,
+  isError: true,
+  content: [{ type: 'text', text }]
 })
 
 export function launchRun(
@@ -195,20 +215,20 @@ export function launchRun(
     return decision !== 'deny'
   }
 
-  async function useTool(node: RunNodeSpec, tools: AgentTool[], use: ModelToolUse): Promise<BetaContentBlockParam> {
+  async function useTool(node: RunNodeSpec, tools: AgentTool[], use: ModelToolUse): Promise<ToolResult> {
     const tool = tools.find((candidate) => candidate.name === use.name)
-    if (!tool) return errorResult(use.id, `Unknown tool: ${use.name}`)
+    if (!tool) return errorResult(use, `Unknown tool: ${use.name}`)
 
     const invalid = tool.validate(use.input)
     if (invalid) {
       log(node, `Rejected a malformed call to ${tool.label}`)
-      return errorResult(use.id, JSON.stringify({ INVALID_JSON: JSON.stringify(use.input), error: invalid }))
+      return errorResult(use, JSON.stringify({ INVALID_JSON: JSON.stringify(use.input), error: invalid }))
     }
 
     if (!(await isApproved(node, tool, use.input))) {
       setNode(node, 'active', 'Working')
       log(node, `Denied ${tool.label}`)
-      return errorResult(use.id, 'The user denied this action.')
+      return errorResult(use, 'The user denied this action.')
     }
 
     setNode(node, 'active', `Using ${tool.label}`)
@@ -216,13 +236,33 @@ export function launchRun(
     try {
       const output = await tool.call(use.input, signal)
       if (output.isError) log(node, `${tool.label} returned an error`)
-      return { type: 'tool_result', tool_use_id: use.id, is_error: output.isError, content: output.content }
+      return { id: use.id, name: use.name, isError: output.isError, content: output.content }
     } catch (error) {
       signal.throwIfAborted()
       const message = error instanceof Error ? error.message : String(error)
       log(node, `${tool.label} failed: ${message}`)
-      return errorResult(use.id, message)
+      return errorResult(use, message)
     }
+  }
+
+  // Chosen once per agent, because switching mid-agent loses its cache and its thinking blocks.
+  async function pickModel(node: RunNodeSpec, usage: ModelUsage[]) {
+    if (!node.routeAmong || node.routeAmong.length < 2) return node.model
+
+    setNode(node, 'active', 'Choosing a model')
+    let model = node.model
+    try {
+      const request = { goal, agent: node.name, prompt: node.prompt, candidates: node.routeAmong }
+      const choice = await client.chooseModel(request, signal)
+      usage.push(...choice.usage)
+      model = choice.model
+      log(node, `Routed to ${model}: ${choice.reason}`)
+    } catch (error) {
+      if (signal.aborted || error instanceof FatalRunError) throw error
+      log(node, `Could not choose a model, so using ${model}`)
+    }
+    emit({ type: 'model', runId, nodeId: node.id, model })
+    return model
   }
 
   async function runNode(node: RunNodeSpec): Promise<NodeOutcome> {
@@ -236,22 +276,25 @@ export function launchRun(
     for (const warning of context.warnings) log(node, warning)
     const tools = environment.toolsFor(node)
 
-    const prompt: ModelPrompt = {
-      model: node.model,
-      system: buildSystemPrompt(node, context, tools.length > 0),
-      messages: [{ role: 'user', content: buildUserMessage(goal, upstream, instructions.get(node.id) ?? []) }],
-      tools
-    }
-    const limitMessage = node.limiter.mode === 'tokens' ? 'Token budget exceeded' : 'Dollar limit reached'
     const usage: ModelUsage[] = []
+    const model = await pickModel(node, usage)
+    emit({ type: 'usage', runId, nodeId: node.id, tokens: totalTokens(usage), cost: totalCost(usage) })
+
+    const session = client.startSession({
+      model,
+      system: buildSystemPrompt(node, context, tools.length > 0),
+      userMessage: buildUserMessage(goal, upstream, instructions.get(node.id) ?? []),
+      tools
+    })
+    const limitMessage = node.limiter.mode === 'tokens' ? 'Token budget exceeded' : 'Dollar limit reached'
     const replies: string[] = []
 
-    log(node, `Started on ${node.model}${tools.length ? ` with ${tools.length} tools` : ''}`)
+    log(node, `Started on ${model}${tools.length ? ` with ${tools.length} tools` : ''}`)
 
     for (let turn = 0; turn < MAX_TURNS; turn += 1) {
       const spent = { tokens: totalTokens(usage), cost: totalCost(usage) }
-      const inputTokens = await client.countInputTokens(prompt, signal)
-      const allowance = outputAllowance(node.limiter, node.model, inputTokens, spent)
+      const inputTokens = await session.countInputTokens(signal)
+      const allowance = outputAllowance(node.limiter, model, inputTokens, spent)
       if (allowance < MIN_USEFUL_OUTPUT_TOKENS) {
         setNode(node, 'stopped', limitMessage)
         log(node, `${limitMessage}: the next step needs ${inputTokens} input tokens, so it was not sent`)
@@ -270,12 +313,12 @@ export function launchRun(
           runId,
           nodeId: node.id,
           tokens: spent.tokens + usageTokens(estimate),
-          cost: spent.cost + usageCost(node.model, estimate)
+          cost: spent.cost + usageCost(model, estimate)
         })
         emit({ type: 'output', runId, nodeId: node.id, text: [...replies, text].filter(Boolean).join('\n\n') })
       }
 
-      const result = await client.stream(prompt, maxTokens, signal, (progress) => {
+      const result = await session.turn(maxTokens, signal, (progress) => {
         if (progress.type === 'phase') {
           setNode(node, 'active', progress.phase === 'thinking' ? 'Thinking' : 'Writing')
           return
@@ -294,8 +337,8 @@ export function launchRun(
       emit({ type: 'usage', runId, nodeId: node.id, tokens: totalTokens(usage), cost: totalCost(usage) })
 
       if (result.stopReason === 'refusal') {
-        setNode(node, 'stopped', 'Declined by Claude')
-        log(node, 'Claude declined this request, so its partial output was not passed on')
+        setNode(node, 'stopped', 'Declined by the model')
+        log(node, 'The model declined this request, so its partial output was not passed on')
         return 'failed'
       }
 
@@ -320,10 +363,9 @@ export function launchRun(
         return 'completed'
       }
 
-      prompt.messages.push({ role: 'assistant', content: result.content })
-      const toolResults: BetaContentBlockParam[] = []
+      const toolResults: ToolResult[] = []
       for (const use of result.toolUses) toolResults.push(await useTool(node, tools, use))
-      prompt.messages.push({ role: 'user', content: toolResults })
+      session.addToolResults(toolResults)
     }
 
     setNode(node, 'stopped', 'Too many steps')

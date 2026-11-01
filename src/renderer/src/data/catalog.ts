@@ -1,4 +1,5 @@
 import { installCommand } from '../../../shared/mcpServers'
+import type { InstalledRegistryServer } from '../../../shared/registry'
 import type { AgentTemplate, CatalogPackage, PackageKind } from '../../../shared/types'
 
 const MCP_REPO = 'https://github.com/modelcontextprotocol/servers'
@@ -33,7 +34,7 @@ const docsWriter: AgentTemplate = {
   name: 'Docs Writer',
   description: 'Keeps READMEs and guides in step with the code.',
   face: 1,
-  models: ['claude-haiku-5-5', 'gemini-2-0-flash'],
+  models: ['claude-haiku-5-5', 'gemini-3.8-flash'],
   prompt:
     'You update documentation to match the code. Prefer short, direct prose and working examples. Never document behavior you have not confirmed in the source.',
   mcpServers: ['filesystem', 'git'],
@@ -267,4 +268,19 @@ export const KIND_LABEL: Record<PackageKind, string> = {
   workflow: 'Workflow'
 }
 
-export const packageById = (id: string) => CATALOG.find((pkg) => pkg.id === id)
+export const registryPackage = ({ id, entry }: InstalledRegistryServer): CatalogPackage => ({
+  id,
+  kind: 'mcp',
+  name: entry.title,
+  author: entry.name,
+  summary: entry.description,
+  tags: entry.source ? [entry.source] : [],
+  repo: entry.repository,
+  transport: entry.source === 'remote' ? 'http' : 'stdio',
+  install: entry.target
+})
+
+export function packageById(id: string, registry: Record<string, InstalledRegistryServer> = {}) {
+  const server = registry[id]
+  return CATALOG.find((pkg) => pkg.id === id) ?? (server && registryPackage(server))
+}

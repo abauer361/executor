@@ -10,9 +10,9 @@ const bridge: ExecutorBridge = {
   revealPath: (path) => ipcRenderer.invoke('library:reveal', path),
   pickDocs: () => ipcRenderer.invoke('docs:pick'),
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
-  hasApiKey: () => ipcRenderer.invoke('key:status'),
-  saveApiKey: (key) => ipcRenderer.invoke('key:save', key),
-  removeApiKey: () => ipcRenderer.invoke('key:remove'),
+  apiKeyStatus: () => ipcRenderer.invoke('key:status'),
+  saveApiKey: (provider, key) => ipcRenderer.invoke('key:save', provider, key),
+  removeApiKey: (provider) => ipcRenderer.invoke('key:remove', provider),
   startRun: (request) => ipcRenderer.invoke('run:start', request),
   stopRun: (runId) => ipcRenderer.invoke('run:stop', runId),
   injectInstruction: (runId, nodeId, text) => ipcRenderer.invoke('run:inject', runId, nodeId, text),
@@ -22,6 +22,10 @@ const bridge: ExecutorBridge = {
   saveMcpFolders: (id, key, folders) => ipcRenderer.invoke('mcp:save-folders', id, key, folders),
   saveMcpSecret: (id, key, value) => ipcRenderer.invoke('mcp:save-secret', id, key, value),
   checkMcpServer: (id) => ipcRenderer.invoke('mcp:check', id),
+  searchRegistry: (query, cursor) => ipcRenderer.invoke('registry:search', query, cursor),
+  installRegistryServer: (name, version) => ipcRenderer.invoke('registry:install', name, version),
+  removeRegistryServer: (id) => ipcRenderer.invoke('registry:remove', id),
+  getRegistryServers: () => ipcRenderer.invoke('registry:servers'),
   onRunEvent: (listener) => {
     const handler = (_event: unknown, runEvent: RunEvent) => listener(runEvent)
     ipcRenderer.on('run:event', handler)

@@ -4,7 +4,7 @@ import type { PendingApproval } from '../../../../shared/types'
 import { Icon, Kbd, RobotFace, StatusDot } from '../../components/ui'
 import { modelName } from '../../data/models'
 import { activeWorkflow, useApp, type BuilderSection } from '../../store'
-import { budgetShare, formatDollars, formatTokens, runnableModel } from '../../usage'
+import { AUTO_MODEL, budgetShare, formatDollars, formatTokens, routableModels, runnableModel } from '../../usage'
 
 const STATUS_NAME = { active: 'Active', queued: 'Queued', warning: 'Waiting', stopped: 'Stopped', idle: 'Idle' }
 
@@ -92,7 +92,9 @@ export function Inspector() {
   const { limiter } = agent
   const share = Math.round(budgetShare(agent, node.data) * 100)
   const activity = workflow.log.filter((entry) => entry.nodeId === node.id).slice(-30).reverse()
-  const model = runnableModel(agent, node.data.activeModel) ?? node.data.activeModel
+  const canRoute = routableModels(agent).length > 1
+  const isAuto = canRoute && node.data.activeModel === AUTO_MODEL
+  const model = isAuto ? AUTO_MODEL : (runnableModel(agent, node.data.activeModel) ?? node.data.activeModel)
   const edit = (section: BuilderSection) => openBuilder(agent.id, section)
   const alreadyStarted = workflow.running && node.data.status !== 'queued'
   const approvals = (workflow.approvals ?? []).filter((approval) => approval.nodeId === node.id)
@@ -138,6 +140,7 @@ export function Inspector() {
               disabled={workflow.running}
               onChange={(event) => setNodeModel(node.id, event.target.value)}
             >
+              {canRoute && <option value={AUTO_MODEL}>Auto</option>}
               {agent.models.map((id) => (
                 <option key={id} value={id} disabled={!RUNNABLE_MODELS.includes(id)}>
                   {modelName(id)}
@@ -145,6 +148,9 @@ export function Inspector() {
               ))}
             </select>
           </div>
+          {isAuto && node.data.routedModel && (
+            <p className="mono muted">Auto picked {modelName(node.data.routedModel)}</p>
+          )}
         </section>
 
         {node.data.output && (

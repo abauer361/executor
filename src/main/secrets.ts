@@ -1,6 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { Provider } from '../shared/pricing'
 
 const secretPath = (name: string) => join(app.getPath('userData'), `${name}.enc`)
 
@@ -22,9 +23,20 @@ export async function loadSecret(name: string) {
 
 export const removeSecret = (name: string) => rm(secretPath(name), { force: true })
 
-const API_KEY = 'anthropic-key'
+const PROVIDERS: Provider[] = ['anthropic', 'openai', 'google']
+const providerSecret = (provider: Provider) => `${provider}-key`
 
-export const saveApiKey = (key: string) => saveSecret(API_KEY, key)
-export const loadApiKey = () => loadSecret(API_KEY)
-export const removeApiKey = () => removeSecret(API_KEY)
-export const hasApiKey = async () => (await loadApiKey()) !== null
+export const saveApiKey = (provider: Provider, key: string) => saveSecret(providerSecret(provider), key)
+export const removeApiKey = (provider: Provider) => removeSecret(providerSecret(provider))
+
+export async function loadApiKeys() {
+  const entries = await Promise.all(
+    PROVIDERS.map(async (provider) => [provider, await loadSecret(providerSecret(provider))] as const)
+  )
+  return Object.fromEntries(entries.filter(([, key]) => key !== null)) as Partial<Record<Provider, string>>
+}
+
+export async function apiKeyStatus() {
+  const keys = await loadApiKeys()
+  return Object.fromEntries(PROVIDERS.map((provider) => [provider, Boolean(keys[provider])])) as Record<Provider, boolean>
+}

@@ -1,6 +1,8 @@
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type NodeChange } from '@xyflow/react'
 import { create } from 'zustand'
 import type { McpStoredSetup } from '../../shared/mcpServers'
+import type { Provider } from '../../shared/pricing'
+import type { InstalledRegistryServer, RegistryEntry } from '../../shared/registry'
 import type {
   Agent,
   AgentTemplate,
@@ -15,7 +17,8 @@ import type {
   WorkflowNode
 } from '../../shared/types'
 import { bridge } from './bridge'
-import { packageById, PREINSTALLED } from './data/catalog'
+import { packageById, PREINSTALLED, registryPackage } from './data/catalog'
+import { RETIRED_MODELS } from './data/models'
 import { createSeed } from './data/seed'
 import { buildRunRequest, prepareRun, reduceRunEvent, serverState } from './runState'
 import { appendLog, logEntry, sampleCost } from './usage'
@@ -39,9 +42,10 @@ interface Persisted {
 
 interface AppState extends Persisted {
   hydrated: boolean
-  hasApiKey: boolean
+  apiKeys: Record<Provider, boolean>
   mcpSetups: Record<string, McpStoredSetup>
   mcpChecking: string[]
+  registryServers: Record<string, InstalledRegistryServer>
   page: Page
   drawerTab: 'workflows' | 'agents'
   drawerOpen: boolean
@@ -58,11 +62,12 @@ interface AppState extends Persisted {
   setPage(page: Page): void
   setUi(patch: Partial<Pick<AppState, 'drawerTab' | 'drawerOpen' | 'inspectorOpen' | 'logsOpen' | 'switcherOpen' | 'settingsOpen' | 'runPanelOpen' | 'creatingWorkflow' | 'builderSection'>>): void
   setTheme(theme: Theme): void
-  saveApiKey(key: string): Promise<KeyResult>
-  removeApiKey(): Promise<void>
+  saveApiKey(provider: Provider, key: string): Promise<KeyResult>
+  removeApiKey(provider: Provider): Promise<void>
   saveMcpFolders(id: string, key: string, folders: string[]): Promise<void>
   saveMcpSecret(id: string, key: string, value: string): Promise<void>
   checkMcpServer(id: string): Promise<void>
+  installRegistryServer(entry: RegistryEntry): Promise<void>
 
   selectProject(id: string): void
   addProject(name: string): void
@@ -136,6 +141,8 @@ function createNode(agent: Agent, position: { x: number; y: number }): WorkflowN
   }
 }
 
+const currentModel = (model: string) => RETIRED_MODELS[model] ?? model
+
 // A run cannot survive a restart, and state saved by older versions has no cost field.
 function restoreWorkflow(workflow: Workflow): Workflow {
   return {
@@ -148,6 +155,7 @@ function restoreWorkflow(workflow: Workflow): Workflow {
         ...node,
         data: {
           ...node.data,
+          activeModel: currentModel(node.data.activeModel),
           costUsed: node.data.costUsed ?? sampleCost(node.data.tokensUsed),
           status: interrupted ? 'idle' : node.data.status,
           task: interrupted ? 'Interrupted' : node.data.task
@@ -215,9 +223,10 @@ function layeredPositions(workflow: Workflow) {
 
 export const useApp = create<AppState>((set, get) => ({
   hydrated: false,
-  hasApiKey: false,
+  apiKeys: { anthropic: false, openai: false, google: false },
   mcpSetups: {},
   mcpChecking: [],
+  registryServers: {},
   projects: [],
   agents: [],
   downloads: {},
@@ -237,8 +246,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   async hydrate() {
     set({
-      hasApiKey: await bridge.hasApiKey().catch(() => false),
-      mcpSetups: await bridge.getMcpSetups().catch(() => ({}))
+      apiKeys: await bridge.apiKeyStatus().catch(() => get().apiKeys),
+      mcpSetups: await bridge.getMcpSetups().catch(() => ({})),
+      registryServers: await bridge.getRegistryServers().catch(() => ({}))
     })
     const saved = await bridge.loadState()
     if (saved) {
@@ -246,6 +256,7 @@ export const useApp = create<AppState>((set, get) => ({
         const state = JSON.parse(saved) as Persisted
         set({
           ...state,
+          agents: state.agents.map((agent) => ({ ...agent, models: [...new Set(agent.models.map(currentModel))] })),
           projects: state.projects.map((project) => ({
             ...project,
             workflows: project.workflows.map(restoreWorkflow)
@@ -277,15 +288,28 @@ export const useApp = create<AppState>((set, get) => ({
   setUi: (patch) => set(patch),
   setTheme: (theme) => set({ theme }),
 
-  async saveApiKey(key) {
-    const result = await bridge.saveApiKey(key)
-    if (result.ok) set({ hasApiKey: true })
+  async saveApiKey(provider, key) {
+    const result = await bridge.saveApiKey(provider, key)
+    if (result.ok) set((state) => ({ apiKeys: { ...state.apiKeys, [provider]: true } }))
     return result
   },
 
-  async removeApiKey() {
-    await bridge.removeApiKey()
-    set({ hasApiKey: false })
+  async removeApiKey(provider) {
+    await bridge.removeApiKey(provider)
+    set((state) => ({ apiKeys: { ...state.apiKeys, [provider]: false } }))
+  },
+
+  async installRegistryServer(entry) {
+    const server = await bridge.installRegistryServer(entry.name, entry.version)
+    const path = await bridge.downloadPackage(registryPackage(server))
+    const mcpSetups = await bridge.getMcpSetups()
+    set((state) => ({
+      mcpSetups,
+      registryServers: { ...state.registryServers, [server.id]: server },
+      downloads: { ...state.downloads, [server.id]: { packageId: server.id, path, downloadedAt: Date.now() } }
+    }))
+    const { downloads, registryServers } = get()
+    if (serverState(server.id, downloads, mcpSetups, registryServers) === 'ready') await get().checkMcpServer(server.id)
   },
 
   async saveMcpFolders(id, key, folders) {
@@ -522,7 +546,7 @@ export const useApp = create<AppState>((set, get) => ({
         ? [...state.agents, agentFromTemplate(pkg.agent, `pkg-${pkg.id}`, pkg.id)]
         : state.agents
     }))
-    if (pkg.kind === 'mcp' && serverState(pkg.id, get().downloads, get().mcpSetups) === 'ready') {
+    if (pkg.kind === 'mcp' && serverState(pkg.id, get().downloads, get().mcpSetups, get().registryServers) === 'ready') {
       await get().checkMcpServer(pkg.id)
     }
   },
@@ -538,12 +562,15 @@ export const useApp = create<AppState>((set, get) => ({
     }
 
     await bridge.removePackage(pkg)
+    if (get().registryServers[pkg.id]) await bridge.removeRegistryServer(pkg.id)
     set((state) => {
       const { [pkg.id]: _removed, ...downloads } = state.downloads
+      const { [pkg.id]: _removedServer, ...registryServers } = state.registryServers
       const ownedIds = new Set(owned.map((agent) => agent.id))
       const detach = (ids: string[]) => ids.filter((id) => id !== pkg.id)
       return {
         downloads,
+        registryServers,
         projects: owned.reduce((next, agent) => removeAgentFromProjects(next, agent.id), state.projects),
         agents: state.agents
           .filter((agent) => !ownedIds.has(agent.id))

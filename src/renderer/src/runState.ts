@@ -1,5 +1,6 @@
-import { spendCeiling } from '../../shared/pricing'
-import { MCP_SERVERS, missingSettings, type McpStoredSetup } from '../../shared/mcpServers'
+import { PROVIDER_LABEL, providerOf, spendCeiling, type Provider } from '../../shared/pricing'
+import { MCP_SERVERS, missingSettings, type McpServerSpec, type McpStoredSetup } from '../../shared/mcpServers'
+import type { InstalledRegistryServer } from '../../shared/registry'
 import { hasCycle } from '../../shared/runGraph'
 import type {
   Agent,
@@ -10,7 +11,17 @@ import type {
   Workflow,
   WorkflowNode
 } from '../../shared/types'
-import { appendLog, formatDollars, formatTokens, logEntry, runnableModel, totalCost, totalTokens } from './usage'
+import {
+  appendLog,
+  AUTO_MODEL,
+  formatDollars,
+  formatTokens,
+  logEntry,
+  routableModels,
+  runnableModel,
+  totalCost,
+  totalTokens
+} from './usage'
 
 const OUTCOME_MESSAGE: Record<RunOutcome, string> = {
   completed: 'Run completed',
@@ -22,7 +33,9 @@ const OUTCOME_MESSAGE: Record<RunOutcome, string> = {
 const agentFor = (node: WorkflowNode, agents: Agent[]) =>
   agents.find((candidate) => candidate.id === node.data.agentId)
 
-export function runProblems(workflow: Workflow, agents: Agent[]) {
+const ALL_KEYS: Record<Provider, boolean> = { anthropic: true, openai: true, google: true }
+
+export function runProblems(workflow: Workflow, agents: Agent[], keys: Record<Provider, boolean> = ALL_KEYS) {
   const problems: string[] = []
   const ids = workflow.nodes.map((node) => node.id)
   if (hasCycle(ids, workflow.edges)) {
@@ -30,18 +43,32 @@ export function runProblems(workflow: Workflow, agents: Agent[]) {
   }
   for (const node of workflow.nodes) {
     const agent = agentFor(node, agents)
-    if (!agent) problems.push('An agent on this canvas no longer exists.')
-    else if (!runnableModel(agent, node.data.activeModel)) {
-      problems.push(`${agent.name} needs a Claude model. Other providers are not connected yet.`)
+    if (!agent) {
+      problems.push('An agent on this canvas no longer exists.')
+      continue
     }
+    const model = runnableModel(agent, node.data.activeModel)
+    const provider = node.data.activeModel === AUTO_MODEL ? 'anthropic' : model && providerOf(model)
+    if (!provider) problems.push(`${agent.name} has no connected model.`)
+    else if (!keys[provider]) problems.push(`${agent.name} needs your ${PROVIDER_LABEL[provider]} API key.`)
   }
-  return problems
+  return [...new Set(problems)]
 }
 
 export type ServerState = 'not-downloaded' | 'needs-setup' | 'ready'
 
-export function serverState(id: string, downloads: Record<string, DownloadRecord>, setups: Record<string, McpStoredSetup>): ServerState {
-  const spec = MCP_SERVERS[id]
+type RegistryServers = Record<string, InstalledRegistryServer>
+
+export const serverSpec = (id: string, registry: RegistryServers = {}): McpServerSpec | undefined =>
+  MCP_SERVERS[id] ?? registry[id]?.spec
+
+export function serverState(
+  id: string,
+  downloads: Record<string, DownloadRecord>,
+  setups: Record<string, McpStoredSetup>,
+  registry: RegistryServers = {}
+): ServerState {
+  const spec = serverSpec(id, registry)
   if (!spec || !downloads[id]) return 'not-downloaded'
   const setup = setups[id] ?? { folders: {}, secrets: [] }
   return missingSettings(spec, setup).length ? 'needs-setup' : 'ready'
@@ -52,12 +79,13 @@ export function runWarnings(
   workflow: Workflow,
   agents: Agent[],
   downloads: Record<string, DownloadRecord>,
-  setups: Record<string, McpStoredSetup>
+  setups: Record<string, McpStoredSetup>,
+  registry: RegistryServers = {}
 ) {
   const unavailable = new Set(
     workflow.nodes
       .flatMap((node) => agentFor(node, agents)?.mcpServers ?? [])
-      .filter((id) => serverState(id, downloads, setups) !== 'ready')
+      .filter((id) => serverState(id, downloads, setups, registry) !== 'ready')
   )
   return [...unavailable]
 }
@@ -66,8 +94,10 @@ export function runWarnings(
 export function runSpendCeiling(workflow: Workflow, agents: Agent[]) {
   return workflow.nodes.reduce((sum, node) => {
     const agent = agentFor(node, agents)
-    const model = agent && runnableModel(agent, node.data.activeModel)
-    return agent && model ? sum + spendCeiling(agent.limiter, model) : sum
+    if (!agent) return sum
+    const pool = node.data.activeModel === AUTO_MODEL ? routableModels(agent) : [runnableModel(agent, node.data.activeModel)]
+    const ceilings = pool.flatMap((model) => (model ? [spendCeiling(agent.limiter, model)] : []))
+    return sum + Math.max(0, ...ceilings)
   }, 0)
 }
 
@@ -86,6 +116,7 @@ export function buildRunRequest(workflow: Workflow, agents: Agent[], goal: strin
           name: agent.name,
           prompt: agent.prompt,
           model,
+          routeAmong: node.data.activeModel === AUTO_MODEL ? routableModels(agent) : undefined,
           limiter: agent.limiter,
           instructions: node.data.instructions ?? [],
           mcpServers: agent.mcpServers,
@@ -117,6 +148,7 @@ export function prepareRun(workflow: Workflow, goal: string, runId: string): Wor
         task: 'Queued',
         tokensUsed: 0,
         costUsed: 0,
+        routedModel: undefined,
         output: '',
         instructions: []
       }
@@ -160,6 +192,8 @@ export function reduceRunEvent(workflow: Workflow, event: RunEvent): Workflow {
       return patchNode(workflow, event.nodeId, { status: event.status, task: event.task })
     case 'usage':
       return patchNode(workflow, event.nodeId, { tokensUsed: event.tokens, costUsed: event.cost })
+    case 'model':
+      return patchNode(workflow, event.nodeId, { routedModel: event.model })
     case 'output':
       return patchNode(workflow, event.nodeId, { output: event.text })
     case 'log':

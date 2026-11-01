@@ -8,17 +8,18 @@ import { countOf, formatDollars } from '../../usage'
 function RunPanel() {
   const workflow = useApp(activeWorkflow)
   const agents = useApp((state) => state.agents)
-  const hasApiKey = useApp((state) => state.hasApiKey)
+  const apiKeys = useApp((state) => state.apiKeys)
   const downloads = useApp((state) => state.downloads)
   const mcpSetups = useApp((state) => state.mcpSetups)
+  const registry = useApp((state) => state.registryServers)
   const { beginRun, setUi } = useApp.getState()
   const [goal, setGoal] = useState(workflow.goal ?? '')
 
-  if (!hasApiKey) {
+  if (!Object.values(apiKeys).some(Boolean)) {
     return (
       <div className="run-panel" role="dialog" aria-label="Add an API key">
         <span className="eyebrow">API key needed</span>
-        <p className="muted">Add your Anthropic API key so agents can run. Runs are billed to your Anthropic account.</p>
+        <p className="muted">Add an API key so agents can run. Runs are billed to your account with that provider.</p>
         <button
           className="btn btn-primary"
           type="button"
@@ -30,9 +31,11 @@ function RunPanel() {
     )
   }
 
-  const problems = runProblems(workflow, agents)
+  const problems = runProblems(workflow, agents, apiKeys)
   const canStart = goal.trim().length > 0 && problems.length === 0
-  const unavailable = runWarnings(workflow, agents, downloads, mcpSetups).map((id) => packageById(id)?.name ?? id)
+  const unavailable = runWarnings(workflow, agents, downloads, mcpSetups, registry).map(
+    (id) => packageById(id, registry)?.name ?? id
+  )
 
   return (
     <div className="run-panel" role="dialog" aria-label="Start a run">

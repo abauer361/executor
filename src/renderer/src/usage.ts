@@ -1,4 +1,4 @@
-import { RUNNABLE_MODELS } from '../../shared/pricing'
+import { CLAUDE_MODELS, RUNNABLE_MODELS } from '../../shared/pricing'
 import type { Agent, LogEntry, NodeRun, Workflow, WorkflowStatus } from '../../shared/types'
 
 // Only prices the starter sample data. Real runs report billed cost.
@@ -30,7 +30,12 @@ export function budgetShare(agent: Agent, data: Pick<NodeRun, 'tokensUsed' | 'co
   return limit > 0 ? Math.min(1, used / limit) : 1
 }
 
-// Runs use the model picked in the Inspector, or the first Claude model in the pool.
+export const AUTO_MODEL = 'auto'
+
+// Routing is a Claude call choosing between Claude models.
+export const routableModels = (agent: Agent) => agent.models.filter((model) => CLAUDE_MODELS.includes(model))
+
+// Runs use the model picked in the Inspector, or the first connected model in the pool.
 export function runnableModel(agent: Agent, activeModel: string) {
   if (RUNNABLE_MODELS.includes(activeModel) && agent.models.includes(activeModel)) return activeModel
   return agent.models.find((model) => RUNNABLE_MODELS.includes(model)) ?? null

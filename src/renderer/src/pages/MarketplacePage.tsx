@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { CatalogPackage, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon } from '../components/ui'
-import { CATALOG, KIND_LABEL } from '../data/catalog'
+import { CATALOG, KIND_LABEL, registryPackage } from '../data/catalog'
 import { serverState } from '../runState'
 import { useApp } from '../store'
 import { countOf } from '../usage'
+import { RegistryBrowser } from './RegistryBrowser'
 
-type Filter = 'all' | PackageKind | 'downloaded'
+type Filter = 'all' | PackageKind | 'downloaded' | 'registry'
 
 const FILTERS: { id: Filter; label: string; icon?: string }[] = [
   { id: 'all', label: 'All Resources' },
@@ -15,7 +16,8 @@ const FILTERS: { id: Filter; label: string; icon?: string }[] = [
   { id: 'skill', label: 'Agent Skills', icon: 'bolt' },
   { id: 'agent', label: 'Prebuilt Agents', icon: 'precision_manufacturing' },
   { id: 'workflow', label: 'Agent Workflows', icon: 'account_tree' },
-  { id: 'downloaded', label: 'Downloaded', icon: 'download_done' }
+  { id: 'downloaded', label: 'Downloaded', icon: 'download_done' },
+  { id: 'registry', label: 'MCP Registry', icon: 'public' }
 ]
 
 const USE_HINT: Record<PackageKind, string> = {
@@ -54,7 +56,7 @@ function Facts({ pkg }: { pkg: CatalogPackage }) {
 function ServerStatus({ pkg }: { pkg: CatalogPackage }) {
   const check = useApp((state) => state.downloads[pkg.id]?.check)
   const checking = useApp((state) => state.mcpChecking.includes(pkg.id))
-  const state = useApp((store) => serverState(pkg.id, store.downloads, store.mcpSetups))
+  const state = useApp((store) => serverState(pkg.id, store.downloads, store.mcpSetups, store.registryServers))
   const { checkMcpServer, setUi } = useApp.getState()
 
   if (checking) return <p className="mono faint package-hint">Starting the server. The first time can take a minute.</p>
@@ -108,7 +110,7 @@ function PackageCard({ pkg }: { pkg: CatalogPackage }) {
             <Icon name="open_in_new" size={13} />
           </button>
         ) : (
-          <span className="mono faint">Included example</span>
+          <span className="mono faint">{pkg.author.includes('/') ? 'No source listed' : 'Included example'}</span>
         )}
       </div>
 
@@ -173,14 +175,16 @@ function PackageCard({ pkg }: { pkg: CatalogPackage }) {
 
 export function MarketplacePage() {
   const downloads = useApp((state) => state.downloads)
+  const registry = useApp((state) => state.registryServers)
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
 
   const matchesFilter = (pkg: CatalogPackage, id: Filter) =>
     id === 'all' || pkg.kind === id || (id === 'downloaded' && Boolean(downloads[pkg.id]))
 
+  const packages = useMemo(() => [...CATALOG, ...Object.values(registry).map(registryPackage)], [registry])
   const needle = query.trim().toLowerCase()
-  const visible = CATALOG.filter(
+  const visible = packages.filter(
     (pkg) =>
       matchesFilter(pkg, filter) &&
       [pkg.name, pkg.author, pkg.summary, ...pkg.tags].join(' ').toLowerCase().includes(needle)
@@ -219,17 +223,25 @@ export function MarketplacePage() {
             >
               {item.icon && <Icon name={item.icon} size={15} />}
               {item.label}
-              <span className="mono">{CATALOG.filter((pkg) => matchesFilter(pkg, item.id)).length}</span>
+              {item.id !== 'registry' && (
+                <span className="mono">{packages.filter((pkg) => matchesFilter(pkg, item.id)).length}</span>
+              )}
             </button>
           ))}
         </div>
 
-        <div className="package-grid">
-          {visible.map((pkg) => (
-            <PackageCard key={pkg.id} pkg={pkg} />
-          ))}
-        </div>
-        {visible.length === 0 && <p className="empty">Nothing matches that search.</p>}
+        {filter === 'registry' ? (
+          <RegistryBrowser query={query.trim()} />
+        ) : (
+          <>
+            <div className="package-grid">
+              {visible.map((pkg) => (
+                <PackageCard key={pkg.id} pkg={pkg} />
+              ))}
+            </div>
+            {visible.length === 0 && <p className="empty">Nothing matches that search.</p>}
+          </>
+        )}
       </div>
     </div>
   )

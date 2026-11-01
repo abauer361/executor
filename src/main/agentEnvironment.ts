@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { McpCheckResult, RunNodeSpec } from '../shared/types'
+import { installedServers } from './registry'
 import { launchFor } from './mcpSetup'
 import { openConnection, type McpConnection } from './mcpConnection'
 import type { AgentContext, AgentEnvironment, AgentTool } from './runEngine'
@@ -53,9 +54,19 @@ async function loadDocument(path: string, name: string) {
   return text
 }
 
+async function connectServer(id: string) {
+  const { spec, launch } = await launchFor(id)
+  const registry = (await installedServers())[id]
+  return openConnection(id, launch, {
+    path: await shellPath(),
+    label: registry?.entry.title,
+    trustHints: spec.trustHints ?? true
+  })
+}
+
 export async function checkServer(id: string): Promise<McpCheckResult> {
   try {
-    const connection = await openConnection(id, await launchFor(id), await shellPath())
+    const connection = await connectServer(id)
     const tools = connection.tools.length
     await connection.close()
     return { ok: true, tools }
@@ -71,12 +82,11 @@ export function createAgentEnvironment(): AgentEnvironment {
     async prepare(nodes, log) {
       const ids = [...new Set(nodes.flatMap((node) => node.mcpServers))]
       if (ids.length === 0) return
-      const path = await shellPath()
 
       await Promise.all(
         ids.map(async (id) => {
           try {
-            connections.set(id, await openConnection(id, await launchFor(id), path))
+            connections.set(id, await connectServer(id))
             log(`Connected ${id}`)
           } catch (error) {
             log(`Could not start ${id}: ${error instanceof Error ? error.message : String(error)}`)

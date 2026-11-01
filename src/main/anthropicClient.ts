@@ -4,10 +4,20 @@ import type {
   BetaContentBlockParam,
   BetaIterationsUsage,
   BetaMessage,
+  BetaMessageParam,
   BetaTool
 } from '@anthropic-ai/sdk/resources/beta/messages/messages'
 import type { KeyResult } from '../shared/types'
-import { FatalRunError, type AgentTool, type ModelClient, type ModelToolUse, type ModelUsage } from './runEngine'
+import {
+  FatalRunError,
+  type AgentTool,
+  type ModelChoice,
+  type ModelChoiceRequest,
+  type ModelSession,
+  type ModelSessionConfig,
+  type ModelToolUse,
+  type ModelUsage
+} from './runEngine'
 
 // Claude Haiku has no server-side fallback.
 const MODELS_WITH_FALLBACK = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
@@ -16,6 +26,13 @@ const MODELS_WITH_FALLBACK = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
 const API_URL = process.env.EXECUTOR_API_URL ?? 'https://api.anthropic.com'
 
 const MAX_UNPARSEABLE_RETRIES = 2
+
+const ROUTER_MODEL = 'claude-haiku-5-5'
+const ROUTER_MAX_TOKENS = 1024
+const REASON_LIMIT = 140
+
+const ROUTER_SYSTEM =
+  'You pick which Claude model should do one agent\'s work. Choose the cheapest model that can do this work well. Use claude-haiku-5-5 for simple, short or mechanical work, claude-sonnet-5-5 for everyday coding, analysis and writing, and claude-opus-5-5 only for unusually hard reasoning. Answer only from the candidates you are given.'
 
 // Blocks from an attempt that was declined partway and must not be replayed.
 const DECLINED_ATTEMPT_BLOCKS = new Set(['thinking', 'redacted_thinking', 'tool_use', 'server_tool_use'])
@@ -68,83 +85,140 @@ function replayableContent(content: BetaContentBlock[]) {
 const apiTool = ({ name, description, inputSchema }: AgentTool) =>
   ({ name, description, input_schema: inputSchema }) as BetaTool
 
-export function createModelClient(apiKey: string): ModelClient {
+export function createAnthropicClient(apiKey: string) {
   const client = connect(apiKey)
 
   return {
-    async countInputTokens(prompt, signal) {
+    async chooseModel({ goal, agent, prompt, candidates }: ModelChoiceRequest, signal: AbortSignal): Promise<ModelChoice> {
       try {
-        const count = await client.beta.messages.countTokens(
+        const message = await client.beta.messages.create(
           {
-            model: prompt.model,
-            system: prompt.system,
-            messages: prompt.messages,
-            ...(prompt.tools.length ? { tools: prompt.tools.map(apiTool) } : {})
+            model: ROUTER_MODEL,
+            max_tokens: ROUTER_MAX_TOKENS,
+            system: ROUTER_SYSTEM,
+            messages: [
+              {
+                role: 'user',
+                content: JSON.stringify({ candidates, agent, agent_instructions: prompt, goal })
+              }
+            ],
+            output_config: {
+              effort: 'low',
+              format: {
+                type: 'json_schema',
+                schema: {
+                  type: 'object',
+                  properties: { model: { type: 'string', enum: candidates }, reason: { type: 'string' } },
+                  required: ['model', 'reason'],
+                  additionalProperties: false
+                }
+              }
+            }
           },
           { signal }
         )
-        return count.input_tokens
+
+        if (message.stop_reason !== 'end_turn') throw new Error(`Routing stopped: ${message.stop_reason}`)
+        const reply = message.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('')
+        const choice = JSON.parse(reply) as { model: string; reason: string }
+        if (!candidates.includes(choice.model)) throw new Error('Routing chose a model outside the pool')
+        return {
+          model: choice.model,
+          reason: String(choice.reason).slice(0, REASON_LIMIT),
+          usage: billedUsage(message, ROUTER_MODEL)
+        }
       } catch (error) {
         throw explain(error)
       }
     },
 
-    async stream(prompt, maxTokens, signal, onProgress) {
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          const stream = client.beta.messages.stream(
-            {
-              model: prompt.model,
-              max_tokens: maxTokens,
-              system: prompt.system,
-              messages: prompt.messages,
-              cache_control: { type: 'ephemeral' },
-              thinking: { type: 'adaptive', display: 'summarized' },
-              output_config: { effort: 'high' },
-              ...(prompt.tools.length
-                ? { tools: prompt.tools.map((tool) => ({ ...apiTool(tool), eager_input_streaming: true })) }
-                : {}),
-              ...(MODELS_WITH_FALLBACK.has(prompt.model)
-                ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
-                : {})
-            },
-            { signal }
-          )
+    startSession({ model, system, userMessage, tools }: ModelSessionConfig): ModelSession {
+      const messages: BetaMessageParam[] = [{ role: 'user', content: userMessage }]
 
-          for await (const event of stream) {
-            if (event.type === 'content_block_start') {
-              if (event.content_block.type === 'thinking') onProgress({ type: 'phase', phase: 'thinking' })
-              if (event.content_block.type === 'text') onProgress({ type: 'phase', phase: 'writing' })
-            } else if (event.type === 'content_block_delta') {
-              if (event.delta.type === 'thinking_delta') {
-                onProgress({ type: 'thinking', chars: event.delta.thinking.length })
-              } else if (event.delta.type === 'text_delta') {
-                onProgress({ type: 'text', text: event.delta.text })
+      return {
+        async countInputTokens(signal) {
+          try {
+            const count = await client.beta.messages.countTokens(
+              { model, system, messages, ...(tools.length ? { tools: tools.map(apiTool) } : {}) },
+              { signal }
+            )
+            return count.input_tokens
+          } catch (error) {
+            throw explain(error)
+          }
+        },
+
+        async turn(maxTokens, signal, onProgress) {
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              const stream = client.beta.messages.stream(
+                {
+                  model,
+                  max_tokens: maxTokens,
+                  system,
+                  messages,
+                  cache_control: { type: 'ephemeral' },
+                  thinking: { type: 'adaptive', display: 'summarized' },
+                  output_config: { effort: 'high' },
+                  ...(tools.length
+                    ? { tools: tools.map((tool) => ({ ...apiTool(tool), eager_input_streaming: true })) }
+                    : {}),
+                  ...(MODELS_WITH_FALLBACK.has(model)
+                    ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
+                    : {})
+                },
+                { signal }
+              )
+
+              for await (const event of stream) {
+                if (event.type === 'content_block_start') {
+                  if (event.content_block.type === 'thinking') onProgress({ type: 'phase', phase: 'thinking' })
+                  if (event.content_block.type === 'text') onProgress({ type: 'phase', phase: 'writing' })
+                } else if (event.type === 'content_block_delta') {
+                  if (event.delta.type === 'thinking_delta') {
+                    onProgress({ type: 'thinking', chars: event.delta.thinking.length })
+                  } else if (event.delta.type === 'text_delta') {
+                    onProgress({ type: 'text', text: event.delta.text })
+                  }
+                }
               }
+
+              const message = await stream.finalMessage()
+              const content = replayableContent(message.content)
+              const toolUses = content.flatMap((block): ModelToolUse[] =>
+                block.type === 'tool_use' ? [{ id: block.id, name: block.name, input: block.input }] : []
+              )
+              if (toolUses.length) messages.push({ role: 'assistant', content: content as BetaContentBlockParam[] })
+              return {
+                text: content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
+                toolUses,
+                stopReason: message.stop_reason,
+                usage: billedUsage(message, model)
+              }
+            } catch (error) {
+              // Anything that is not an API error here is a tool input that could not be parsed.
+              if (error instanceof Anthropic.APIError || attempt >= MAX_UNPARSEABLE_RETRIES) throw explain(error)
             }
           }
+        },
 
-          const message = await stream.finalMessage()
-          const content = replayableContent(message.content)
-          return {
-            content: content as BetaContentBlockParam[],
-            text: content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
-            toolUses: content.flatMap((block): ModelToolUse[] =>
-              block.type === 'tool_use' ? [{ id: block.id, name: block.name, input: block.input }] : []
-            ),
-            stopReason: message.stop_reason,
-            usage: billedUsage(message, prompt.model)
-          }
-        } catch (error) {
-          // Anything that is not an API error here is a tool input that could not be parsed.
-          if (error instanceof Anthropic.APIError || attempt >= MAX_UNPARSEABLE_RETRIES) throw explain(error)
+        addToolResults(results) {
+          messages.push({
+            role: 'user',
+            content: results.map((result) => ({
+              type: 'tool_result',
+              tool_use_id: result.id,
+              is_error: result.isError,
+              content: result.content
+            }))
+          })
         }
       }
     }
   }
 }
 
-export async function verifyApiKey(apiKey: string): Promise<KeyResult> {
+export async function verifyAnthropicKey(apiKey: string): Promise<KeyResult> {
   try {
     await connect(apiKey).models.list({ limit: 1 })
     return { ok: true }

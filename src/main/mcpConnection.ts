@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import { apiToolName, toolNeedsApproval, type McpLaunch } from '../shared/mcpServers'
 import type { AgentTool, ToolOutput, ToolResultContent } from './runEngine'
@@ -12,9 +13,15 @@ const STDERR_TAIL_CHARS = 2000
 
 const validator = new AjvJsonSchemaValidator()
 
-function explainFailure(error: unknown, command: string, stderr: string) {
+function explainFailure(error: unknown, launch: McpLaunch, stderr: string) {
   const message = error instanceof Error ? error.message : String(error)
-  if (message.includes('ENOENT')) return `${command} is not installed, or Executor cannot find it.`
+  if (launch.transport === 'http') {
+    if (error instanceof StreamableHTTPError && (error.code === 401 || error.code === 403)) {
+      return 'This server needs an account or key that Executor cannot provide.'
+    }
+    return `Could not connect: ${message}`
+  }
+  if (message.includes('ENOENT')) return `${launch.command} is not installed, or Executor cannot find it.`
   if (/docker daemon|Cannot connect to the Docker/i.test(stderr)) return 'Docker is not running. Start Docker Desktop and try again.'
   const lastLine = stderr.trim().split('\n').at(-1)
   return lastLine || message
@@ -44,17 +51,30 @@ export interface McpConnection {
   close(): Promise<void>
 }
 
-export async function openConnection(id: string, launch: McpLaunch, path: string): Promise<McpConnection> {
+interface ConnectionOptions {
+  path: string
+  label?: string
+  trustHints?: boolean
+}
+
+export async function openConnection(id: string, launch: McpLaunch, options: ConnectionOptions): Promise<McpConnection> {
+  const { path, label = id, trustHints = true } = options
   let stderr = ''
-  const transport = new StdioClientTransport({
-    command: launch.command,
-    args: launch.args,
-    env: { ...getDefaultEnvironment(), PATH: path, ...launch.env },
-    stderr: 'pipe'
-  })
-  transport.stderr?.on('data', (chunk: Buffer) => {
-    stderr = (stderr + chunk.toString()).slice(-STDERR_TAIL_CHARS)
-  })
+  let transport: StdioClientTransport | StreamableHTTPClientTransport
+
+  if (launch.transport === 'http') {
+    transport = new StreamableHTTPClientTransport(new URL(launch.url), { requestInit: { headers: launch.headers } })
+  } else {
+    transport = new StdioClientTransport({
+      command: launch.command,
+      args: launch.args,
+      env: { ...getDefaultEnvironment(), PATH: path, ...launch.env },
+      stderr: 'pipe'
+    })
+    transport.stderr?.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-STDERR_TAIL_CHARS)
+    })
+  }
 
   const client = new Client({ name: 'executor', version: '0.2.0' })
   try {
@@ -67,10 +87,10 @@ export async function openConnection(id: string, launch: McpLaunch, path: string
         const check = validator.getValidator(tool.inputSchema)
         return {
           name: apiToolName(id, tool.name),
-          label: `${id} ${tool.name}`,
+          label: `${label} ${tool.name}`,
           description: tool.description ?? tool.name,
           inputSchema: tool.inputSchema,
-          needsApproval: toolNeedsApproval(tool.annotations),
+          needsApproval: toolNeedsApproval(tool.annotations, trustHints),
           validate(input) {
             const result = check(input)
             return result.valid ? null : (result.errorMessage ?? 'Input does not match the tool schema')
@@ -88,6 +108,6 @@ export async function openConnection(id: string, launch: McpLaunch, path: string
     }
   } catch (error) {
     await client.close().catch(() => {})
-    throw new Error(explainFailure(error, launch.command, stderr), { cause: error })
+    throw new Error(explainFailure(error, launch, stderr), { cause: error })
   }
 }

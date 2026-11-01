@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { outputAllowance, spendCeiling, usageCost, usageTokens } from '../shared/pricing'
+import { outputAllowance, providerOf, spendCeiling, usageCost, usageTokens } from '../shared/pricing'
 import { hasCycle } from '../shared/runGraph'
 import type { ApprovalDecision, Limiter, RunEvent, RunNodeSpec } from '../shared/types'
 import {
@@ -11,8 +11,8 @@ import {
   type AgentEnvironment,
   type AgentTool,
   type ModelClient,
-  type ModelResult,
-  type ModelToolUse
+  type ModelToolUse,
+  type ModelTurn
 } from './runEngine'
 
 const tokens = (limit: number): Limiter => ({ mode: 'tokens', tokens: limit, dollars: 5 })
@@ -71,40 +71,53 @@ interface FakeCall {
 
 function fakeClient(overrides: {
   inputTokens?: number
-  reply?: (call: FakeCall) => Partial<ModelResult> | Error | Promise<Partial<ModelResult>>
+  choice?: string | Error
+  reply?: (call: FakeCall) => Partial<ModelTurn> | Error | Promise<Partial<ModelTurn>>
 } = {}) {
   const calls: FakeCall[] = []
   let concurrent = 0
   let peak = 0
   const client: ModelClient = {
-    countInputTokens: async () => overrides.inputTokens ?? 100,
-    stream: async (prompt, maxTokens, signal, onProgress) => {
-      const id = /running as the (\S+) agent/.exec(prompt.system)?.[1] ?? '?'
-      const first = prompt.messages[0].content
-      const call: FakeCall = {
-        id,
-        userMessage: typeof first === 'string' ? first : '',
-        maxTokens,
-        messages: structuredClone(prompt.messages),
-        turn: calls.filter((candidate) => candidate.id === id).length
-      }
-      calls.push(call)
-      concurrent += 1
-      peak = Math.max(peak, concurrent)
-      onProgress({ type: 'phase', phase: 'writing' })
-      onProgress({ type: 'text', text: 'partial' })
-      await new Promise((resolve) => setTimeout(resolve, 1))
-      concurrent -= 1
-      if (signal.aborted) throw new Error('aborted')
-      const reply = (await overrides.reply?.(call)) ?? {}
-      if (reply instanceof Error) throw reply
+    chooseModel: async ({ candidates }) => {
+      if (overrides.choice instanceof Error) throw overrides.choice
       return {
-        content: [],
-        text: `output of ${id}`,
-        toolUses: [],
-        stopReason: 'end_turn',
-        usage: [{ model: prompt.model, inputTokens: 100, outputTokens: 50 }],
-        ...reply
+        model: overrides.choice ?? candidates[0],
+        reason: 'It fits',
+        usage: [{ model: 'claude-haiku-5-5', inputTokens: 20, outputTokens: 10 }]
+      }
+    },
+    startSession: ({ model, system, userMessage }) => {
+      const id = /running as the (\S+) agent/.exec(system)?.[1] ?? '?'
+      const messages: unknown[] = [{ role: 'user', content: userMessage }]
+      return {
+        countInputTokens: async () => overrides.inputTokens ?? 100,
+        addToolResults: (results) => void messages.push({ role: 'user', content: results }),
+        turn: async (maxTokens, signal, onProgress) => {
+          const call: FakeCall = {
+            id,
+            userMessage,
+            maxTokens,
+            messages: structuredClone(messages),
+            turn: calls.filter((candidate) => candidate.id === id).length
+          }
+          calls.push(call)
+          concurrent += 1
+          peak = Math.max(peak, concurrent)
+          onProgress({ type: 'phase', phase: 'writing' })
+          onProgress({ type: 'text', text: 'partial' })
+          await new Promise((resolve) => setTimeout(resolve, 1))
+          concurrent -= 1
+          if (signal.aborted) throw new Error('aborted')
+          const reply = (await overrides.reply?.(call)) ?? {}
+          if (reply instanceof Error) throw reply
+          return {
+            text: `output of ${id}`,
+            toolUses: [],
+            stopReason: 'end_turn',
+            usage: [{ model, inputTokens: 100, outputTokens: 50 }],
+            ...reply
+          }
+        }
       }
     }
   }
@@ -251,7 +264,7 @@ describe('failures', () => {
     })
     const events = await run([node('a'), node('b')], [['a', 'b']], client)
     expect(calls).toHaveLength(1)
-    expect(lastNode(events, 'a')).toMatchObject({ task: 'Declined by Claude' })
+    expect(lastNode(events, 'a')).toMatchObject({ task: 'Declined by the model' })
   })
 })
 
@@ -336,19 +349,6 @@ describe('tool use', () => {
     expect(last.content).toHaveLength(2)
   })
 
-  it('keeps the assistant turn so thinking blocks are echoed back', async () => {
-    const { tool } = fakeTool('read', false)
-    const content = [{ type: 'thinking', thinking: 'x', signature: 'sig' }]
-    const { client, calls } = fakeClient({
-      reply: (call: FakeCall) =>
-        call.turn === 0
-          ? { content: content as ModelResult['content'], toolUses: [toolUse('t1', 'read')], stopReason: 'tool_use' }
-          : {}
-    })
-    await run([node('a')], [], client, environment([tool]).value)
-    expect(calls[1].messages[1]).toEqual({ role: 'assistant', content })
-  })
-
   it('reports an unknown tool to the model instead of failing', async () => {
     const { client, calls } = fakeClient({ reply: callTool(toolUse('t1', 'nope')) })
     await run([node('a')], [], client, environment([]).value)
@@ -427,6 +427,53 @@ describe('tool use', () => {
     const context = { ...emptyContext(), warnings: ['notes.bin is not a text file'] }
     const events = await run([node('a')], [], client, environment([], context).value)
     expect(events.some((event) => event.type === 'log' && event.message.includes('notes.bin'))).toBe(true)
+  })
+})
+
+describe('routing', () => {
+  const pool = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']
+  const routed = (patch: Partial<RunNodeSpec> = {}) => ({ ...node('a'), routeAmong: pool, ...patch })
+  const usedModels = (events: RunEvent[]) =>
+    events.flatMap((event) => (event.type === 'log' && event.message.startsWith('Started on') ? [event.message] : []))
+
+  it('runs the agent on the chosen model', async () => {
+    const { client } = fakeClient({ choice: 'claude-opus-5-5' })
+    const events = await run([routed()], [], client)
+    expect(usedModels(events)[0]).toContain('claude-opus-5-5')
+    expect(events.some((event) => event.type === 'model' && event.model === 'claude-opus-5-5')).toBe(true)
+  })
+
+  it('logs why a model was chosen', async () => {
+    const { client } = fakeClient({ choice: 'claude-haiku-5-5' })
+    const events = await run([routed()], [], client)
+    expect(events.some((event) => event.type === 'log' && event.message.includes('It fits'))).toBe(true)
+  })
+
+  it('counts routing against the agent budget', async () => {
+    const { client } = fakeClient({ choice: 'claude-haiku-5-5' })
+    const events = await run([routed()], [], client)
+    expect(events.filter((event) => event.type === 'usage').at(-1)).toMatchObject({ tokens: 180 })
+  })
+
+  it('falls back to the default model when routing fails', async () => {
+    const { client } = fakeClient({ choice: new Error('Overloaded') })
+    const events = await run([routed()], [], client)
+    expect(usedModels(events)[0]).toContain('claude-sonnet-5-5')
+    expect(endOf(events)).toMatchObject({ outcome: 'completed' })
+  })
+
+  it('still stops the run when the key is rejected during routing', async () => {
+    const { client, calls } = fakeClient({ choice: new FatalRunError('Bad key') })
+    const events = await run([routed()], [], client)
+    expect(calls).toHaveLength(0)
+    expect(endOf(events)).toMatchObject({ outcome: 'failed', message: 'Bad key' })
+  })
+
+  it('skips routing when there is only one candidate', async () => {
+    const { client } = fakeClient({ choice: 'claude-opus-5-5' })
+    const events = await run([routed({ routeAmong: ['claude-haiku-5-5'] })], [], client)
+    expect(usedModels(events)[0]).toContain('claude-sonnet-5-5')
+    expect(events.some((event) => event.type === 'model')).toBe(false)
   })
 })
 
@@ -539,6 +586,31 @@ describe('pricing', () => {
   it('works out the output a limit allows', () => {
     expect(outputAllowance(tokens(5000), 'claude-sonnet-5-5', 1000)).toBe(4000)
     expect(outputAllowance({ mode: 'dollars', tokens: 0, dollars: 1 }, 'claude-sonnet-5-5', 0)).toBe(100_000)
+  })
+
+  it('applies published price changes on their date', () => {
+    const million = { inputTokens: 1_000_000, outputTokens: 0 }
+    expect(usageCost('gemini-4-argon', million, '2026-11-30')).toBe(2)
+    expect(usageCost('gemini-4-argon', million, '2026-12-01')).toBe(4)
+    expect(usageCost('gemini-3.8-flash', million, '2026-12-31')).toBe(0.75)
+    expect(usageCost('gemini-3.8-flash', million, '2027-01-01')).toBe(1.5)
+  })
+
+  it('applies the long prompt rate on OpenAI', () => {
+    expect(usageCost('gpt-6.1-sol', { inputTokens: 272_000, outputTokens: 0 })).toBeCloseTo(0.544)
+    expect(usageCost('gpt-6.1-sol', { inputTokens: 272_001, outputTokens: 1_000_000 })).toBeCloseTo(1.088 + 15)
+  })
+
+  it('uses a listed cache write rate when there is one', () => {
+    const write = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 1_000_000 }
+    expect(usageCost('gpt-6-luna', write)).toBeCloseTo(0.125)
+    expect(usageCost('claude-sonnet-5-5', write)).toBeCloseTo(2.5)
+  })
+
+  it('works out which provider serves a model', () => {
+    expect(providerOf('gpt-6.1-sol')).toBe('openai')
+    expect(providerOf('gemini-4-argon')).toBe('google')
+    expect(providerOf('claude-opus-5-5')).toBe('anthropic')
   })
 
   it('reports the most an agent could spend', () => {

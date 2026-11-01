@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { RUNNABLE_MODELS } from '../../../shared/pricing'
+import { PROVIDER_LABEL, providerOf, RUNNABLE_MODELS } from '../../../shared/pricing'
 import type { Agent, MemoryDoc, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon, RobotFace } from '../components/ui'
-import { CATALOG, packageById } from '../data/catalog'
+import { CATALOG, packageById, registryPackage } from '../data/catalog'
 import { MODELS } from '../data/models'
 import { serverState } from '../runState'
 import { useApp } from '../store'
@@ -117,7 +117,7 @@ function ModelPool({ draft }: { draft: Agent }) {
               </span>
               <span className="strong truncate">{model.name}</span>
               <span className="mono faint">
-                {RUNNABLE_MODELS.includes(model.id) ? model.focus : 'Not connected yet'}
+                {RUNNABLE_MODELS.includes(model.id) ? `${PROVIDER_LABEL[providerOf(model.id)]} · ${model.focus}` : 'Not connected yet'}
               </span>
             </label>
           )
@@ -125,8 +125,8 @@ function ModelPool({ draft }: { draft: Agent }) {
       </div>
       <p className="note">
         <Icon name="auto_awesome" size={15} />
-        Runs use the model picked in the Inspector, or the first Claude model here. Automatic routing between models
-        is not built yet.
+        Runs use the model picked in the Inspector. With two or more Claude models here, choose Auto there to let a
+        quick Haiku call pick the cheapest one that fits the work.
       </p>
     </Section>
   )
@@ -207,10 +207,11 @@ function AttachButton({
   field: 'mcpServers' | 'skills'
 }) {
   const downloads = useApp((state) => state.downloads)
+  const registry = useApp((state) => state.registryServers)
   const { updateDraft, setPage } = useApp.getState()
   const [open, setOpen] = useState(false)
 
-  const available = CATALOG.filter(
+  const available = [...CATALOG, ...Object.values(registry).map(registryPackage)].filter(
     (pkg) => pkg.kind === kind && downloads[pkg.id] && !draft[field].includes(pkg.id)
   )
 
@@ -256,6 +257,7 @@ function AttachButton({
 function AttachedList({ draft, field, emptyText }: { draft: Agent; field: 'mcpServers' | 'skills'; emptyText: string }) {
   const downloads = useApp((state) => state.downloads)
   const mcpSetups = useApp((state) => state.mcpSetups)
+  const registry = useApp((state) => state.registryServers)
   const { updateDraft, setUi } = useApp.getState()
   const ids = draft[field]
 
@@ -264,14 +266,14 @@ function AttachedList({ draft, field, emptyText }: { draft: Agent; field: 'mcpSe
   return (
     <div className={field === 'skills' ? 'attached-grid' : 'attached-list'}>
       {ids.map((id) => {
-        const pkg = packageById(id)
+        const pkg = packageById(id, registry)
         return (
           <div key={id} className="attached">
             <span className="stack grow">
               <span className="row">
                 <span className="strong truncate">{pkg?.name ?? id}</span>
                 {!downloads[id] && <span className="badge badge-warning">Not downloaded</span>}
-                {field === 'mcpServers' && serverState(id, downloads, mcpSetups) === 'needs-setup' && (
+                {field === 'mcpServers' && serverState(id, downloads, mcpSetups, registry) === 'needs-setup' && (
                   <button className="badge badge-warning" type="button" onClick={() => setUi({ settingsOpen: true })}>
                     Needs setup
                   </button>

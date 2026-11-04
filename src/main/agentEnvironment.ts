@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { checkSkillFile, skillFileUrl, skillSource } from '../shared/skills'
 import type { McpCheckResult, RunNodeSpec } from '../shared/types'
 import { installedServers } from './registry'
 import { launchFor } from './mcpSetup'
@@ -8,8 +9,6 @@ import { openConnection, type McpConnection } from './mcpConnection'
 import type { AgentContext, AgentEnvironment, AgentTool } from './runEngine'
 import { shellPath } from './shellPath'
 
-const SKILLS_URL = 'https://raw.githubusercontent.com/anthropics/skills/main/skills'
-const MAX_SKILL_BYTES = 1_000_000
 const MAX_DOCUMENT_BYTES = 500_000
 
 const skillPath = (id: string) => join(app.getPath('userData'), 'library', 'skill', id, 'SKILL.md')
@@ -18,16 +17,22 @@ function assertSkillId(id: string) {
   if (!/^[a-z0-9-]+$/.test(id)) throw new Error(`Invalid skill: ${id}`)
 }
 
+function listedSkill(id: string) {
+  const skill = skillSource(id)
+  if (!skill) throw new Error(`${id} is not in the reviewed skill list`)
+  return skill
+}
+
 export async function downloadSkill(id: string) {
-  assertSkillId(id)
-  const response = await fetch(`${SKILLS_URL}/${id}/SKILL.md`)
-  if (!response.ok) throw new Error(`Could not download ${id}: ${response.status}`)
-  const text = await response.text()
-  if (text.length > MAX_SKILL_BYTES) throw new Error(`${id} is too large to use.`)
+  const skill = listedSkill(id)
+  const response = await fetch(skillFileUrl(skill))
+  if (!response.ok) throw new Error(`Could not download ${skill.name}: ${response.status}`)
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  const text = await checkSkillFile(skill, bytes)
 
   const path = skillPath(id)
   await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
+  await writeFile(path, bytes)
   return text
 }
 
@@ -36,10 +41,12 @@ export function removeSkill(id: string) {
   return rm(dirname(skillPath(id)), { recursive: true, force: true })
 }
 
+// A saved copy is used only if it still matches the reviewed version. Older or edited copies
+// are replaced by downloading the pinned one again.
 async function loadSkill(id: string) {
-  assertSkillId(id)
+  const skill = listedSkill(id)
   try {
-    return await readFile(skillPath(id), 'utf8')
+    return await checkSkillFile(skill, new Uint8Array(await readFile(skillPath(id))))
   } catch {
     return downloadSkill(id)
   }

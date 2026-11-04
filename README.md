@@ -69,7 +69,7 @@ Real:
 
 - Runs call Claude, GPT and Gemini through each provider's official SDK, in the main process.
 - Agents use tools from real MCP servers. Servers start for each run and stop when it ends. Launch commands are defined in `src/shared/mcpServers.ts`, and the interface can only pass a server's id.
-- Skills are downloaded from `anthropics/skills`, and skills and text memory docs are added to the agent's instructions.
+- Skills come from a reviewed list of first-party repositories in `src/shared/skills.ts`. Each one is locked to the commit it was reviewed at, and its text must match the recorded hash before an agent sees it. Skills and text memory docs are added to the agent's instructions.
 - Token counts and costs come from reported usage at each provider's published rates, in `src/shared/pricing.ts`. Announced Gemini price changes apply on their dates. The live meter is an estimate until each model call finishes.
 - Your API keys and MCP tokens are verified or tested, then encrypted with macOS keychain-backed storage. The interface can save or remove them but cannot read them back. Each API key is only sent to its own provider, whose address is fixed in the app, and MCP servers receive only their own settings.
 - Projects, workflows, agents and settings are saved to `~/Library/Application Support/Executor/`.
@@ -78,8 +78,8 @@ Not yet:
 
 - **DeepSeek is not connected.** It stays in the list, marked as not connected.
 - **Routing covers Claude models only**, and picks one model per agent rather than per step.
-- **Skills, prebuilt agents and workflows come from a built-in list** in `src/renderer/src/data/catalog.ts`. Only MCP servers have a live registry.
-- **Skills are instructions only.** Scripts bundled with a skill are not run.
+- **Skills, prebuilt agents and workflows come from built-in lists** in `src/shared/skills.ts` and `src/renderer/src/data/catalog.ts`. Only MCP servers have a live registry.
+- **Skills are instructions only.** Only `SKILL.md` is downloaded, so scripts and reference files bundled with a skill are not available. MCP Builder, Skill Creator and Webapp Testing bundle such files.
 - **Memory docs must be text files** under 500 KB. Anything else is skipped and reported in the logs.
 - **The starting projects and agents are sample data**, labelled in the ribbon until a workflow's first real run.
 

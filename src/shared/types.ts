@@ -116,6 +116,7 @@ export interface CatalogPackage {
   summary: string
   tags: string[]
   repo?: string
+  license?: string
   install?: string
   transport?: string
   agent?: AgentTemplate

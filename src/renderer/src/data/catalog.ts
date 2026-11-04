@@ -1,9 +1,9 @@
 import { installCommand } from '../../../shared/mcpServers'
+import { SKILLS, skillPageUrl, type SkillSource } from '../../../shared/skills'
 import type { InstalledRegistryServer } from '../../../shared/registry'
 import type { AgentTemplate, CatalogPackage, PackageKind } from '../../../shared/types'
 
 const MCP_REPO = 'https://github.com/modelcontextprotocol/servers'
-const SKILLS_REPO = 'https://github.com/anthropics/skills'
 const EXAMPLES = 'Executor examples'
 
 const reviewer: AgentTemplate = {
@@ -65,6 +65,17 @@ const factChecker: AgentTemplate = {
   skills: [],
   limiter: { mode: 'tokens', tokens: 100_000, dollars: 5 }
 }
+
+const skillPackage = (skill: SkillSource): CatalogPackage => ({
+  id: skill.id,
+  kind: 'skill',
+  name: skill.name,
+  author: skill.author,
+  summary: skill.summary,
+  tags: skill.tags,
+  repo: skillPageUrl(skill),
+  license: skill.license
+})
 
 export const CATALOG: CatalogPackage[] = [
   {
@@ -155,42 +166,7 @@ export const CATALOG: CatalogPackage[] = [
     transport: 'stdio',
     install: installCommand('playwright')
   },
-  {
-    id: 'mcp-builder',
-    kind: 'skill',
-    name: 'MCP Builder',
-    author: 'anthropics',
-    summary: 'Guides an agent through designing and building a new MCP server.',
-    tags: ['mcp', 'development'],
-    repo: SKILLS_REPO
-  },
-  {
-    id: 'skill-creator',
-    kind: 'skill',
-    name: 'Skill Creator',
-    author: 'anthropics',
-    summary: 'Guides an agent through writing and improving agent skills.',
-    tags: ['skills', 'authoring'],
-    repo: SKILLS_REPO
-  },
-  {
-    id: 'webapp-testing',
-    kind: 'skill',
-    name: 'Webapp Testing',
-    author: 'anthropics',
-    summary: 'Test local web applications with Playwright and capture what happened.',
-    tags: ['testing', 'browser'],
-    repo: SKILLS_REPO
-  },
-  {
-    id: 'frontend-design',
-    kind: 'skill',
-    name: 'Frontend Design',
-    author: 'anthropics',
-    summary: 'Guidance for building distinctive, production-grade interfaces.',
-    tags: ['ui', 'design'],
-    repo: SKILLS_REPO
-  },
+  ...SKILLS.map(skillPackage),
   {
     id: 'pr-review-daemon',
     kind: 'agent',

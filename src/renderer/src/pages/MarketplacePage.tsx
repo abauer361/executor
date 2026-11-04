@@ -32,7 +32,7 @@ function Facts({ pkg }: { pkg: CatalogPackage }) {
   if (pkg.kind === 'mcp') {
     facts.push(['Transport', pkg.transport ?? 'stdio'], ['Install', pkg.install ?? ''])
   } else if (pkg.kind === 'skill') {
-    facts.push(['Format', 'SKILL.md'], ['Author', pkg.author])
+    facts.push(['License', pkg.license ?? 'Not stated'], ['Author', pkg.author])
   } else if (pkg.agent) {
     facts.push(['Models', String(pkg.agent.models.length)], ['MCP Servers', String(pkg.agent.mcpServers.length)])
   } else if (pkg.workflow) {

@@ -4,6 +4,7 @@ import { basename, dirname, join, sep } from 'node:path'
 import type { Provider } from '../shared/pricing'
 import type { ApprovalDecision, CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
+import { installClawHubSkill, installedClawHubSkills, previewClawHubSkill, removeClawHubSkill, searchClawHub } from './clawhub'
 import { createModelClient, verifyApiKey } from './modelClients'
 import { allServerSetups, removeServerSecrets, saveFolders, saveServerSecret } from './mcpSetup'
 import { installedServers, installServer, removeServer, searchRegistry } from './registry'
@@ -118,6 +119,14 @@ function registerIpc() {
     if (server) await removeServerSecrets(server.spec)
     await removeServer(id)
   })
+
+  ipcMain.handle('clawhub:search', (_event, query: string, cursor?: string) => searchClawHub(query, cursor))
+  ipcMain.handle('clawhub:skills', () => installedClawHubSkills())
+  ipcMain.handle('clawhub:preview', (_event, owner: string, slug: string) => previewClawHubSkill(owner, slug))
+  ipcMain.handle('clawhub:install', (_event, owner: string, slug: string, version: string, sha256: string) =>
+    installClawHubSkill(owner, slug, version, sha256)
+  )
+  ipcMain.handle('clawhub:remove', (_event, id: string) => removeClawHubSkill(id))
 
   ipcMain.handle('mcp:setups', () => allServerSetups())
   ipcMain.handle('mcp:check', (_event, id: string) => checkServer(id))

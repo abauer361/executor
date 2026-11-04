@@ -1300,6 +1300,8 @@ h3 {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  /* Reserve the scrollbar's space so the page does not shift when a tab is short enough not to scroll. */
+  scrollbar-gutter: stable;
   background: var(--bg);
 }
 
@@ -1682,6 +1684,25 @@ h3 {
   color: inherit;
 }
 
+.downloaded-kinds {
+  margin-bottom: 20px;
+}
+
+.downloaded-kinds button span {
+  opacity: 0.6;
+}
+
+.market-section + .market-section {
+  margin-top: 28px;
+}
+
+.market-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .package-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -1955,6 +1976,22 @@ button.badge {
   border-radius: 8px;
   background: var(--bg);
   color: var(--fg-strong);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.skill-text {
+  max-height: 280px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
 }

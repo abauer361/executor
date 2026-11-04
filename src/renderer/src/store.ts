@@ -2,6 +2,7 @@ import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge
 import { create } from 'zustand'
 import type { McpStoredSetup } from '../../shared/mcpServers'
 import type { Provider } from '../../shared/pricing'
+import type { ClawHubPreview, InstalledClawHubSkill } from '../../shared/clawhub'
 import type { InstalledRegistryServer, RegistryEntry } from '../../shared/registry'
 import type {
   Agent,
@@ -17,7 +18,7 @@ import type {
   WorkflowNode
 } from '../../shared/types'
 import { bridge } from './bridge'
-import { packageById, PREINSTALLED, registryPackage } from './data/catalog'
+import { clawhubPackage, packageById, PREINSTALLED, registryPackage } from './data/catalog'
 import { RETIRED_MODELS } from './data/models'
 import { createSeed } from './data/seed'
 import { buildRunRequest, prepareRun, reduceRunEvent, serverState } from './runState'
@@ -46,6 +47,7 @@ interface AppState extends Persisted {
   mcpSetups: Record<string, McpStoredSetup>
   mcpChecking: string[]
   registryServers: Record<string, InstalledRegistryServer>
+  clawhubSkills: Record<string, InstalledClawHubSkill>
   page: Page
   drawerTab: 'workflows' | 'agents'
   drawerOpen: boolean
@@ -68,6 +70,7 @@ interface AppState extends Persisted {
   saveMcpSecret(id: string, key: string, value: string): Promise<void>
   checkMcpServer(id: string): Promise<void>
   installRegistryServer(entry: RegistryEntry): Promise<void>
+  installClawHubSkill(preview: ClawHubPreview): Promise<void>
 
   selectProject(id: string): void
   addProject(name: string): void
@@ -227,6 +230,7 @@ export const useApp = create<AppState>((set, get) => ({
   mcpSetups: {},
   mcpChecking: [],
   registryServers: {},
+  clawhubSkills: {},
   projects: [],
   agents: [],
   downloads: {},
@@ -248,7 +252,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       apiKeys: await bridge.apiKeyStatus().catch(() => get().apiKeys),
       mcpSetups: await bridge.getMcpSetups().catch(() => ({})),
-      registryServers: await bridge.getRegistryServers().catch(() => ({}))
+      registryServers: await bridge.getRegistryServers().catch(() => ({})),
+      clawhubSkills: await bridge.getClawHubSkills().catch(() => ({}))
     })
     const saved = await bridge.loadState()
     if (saved) {
@@ -310,6 +315,22 @@ export const useApp = create<AppState>((set, get) => ({
     }))
     const { downloads, registryServers } = get()
     if (serverState(server.id, downloads, mcpSetups, registryServers) === 'ready') await get().checkMcpServer(server.id)
+  },
+
+  async installClawHubSkill(preview) {
+    const { owner, slug } = preview.entry
+    const skill = await bridge.installClawHubSkill(owner, slug, preview.version, preview.sha256)
+    let path: string
+    try {
+      path = await bridge.downloadPackage(clawhubPackage(skill))
+    } catch (error) {
+      await bridge.removeClawHubSkill(skill.id)
+      throw error
+    }
+    set((state) => ({
+      clawhubSkills: { ...state.clawhubSkills, [skill.id]: skill },
+      downloads: { ...state.downloads, [skill.id]: { packageId: skill.id, path, downloadedAt: Date.now() } }
+    }))
   },
 
   async saveMcpFolders(id, key, folders) {
@@ -563,14 +584,17 @@ export const useApp = create<AppState>((set, get) => ({
 
     await bridge.removePackage(pkg)
     if (get().registryServers[pkg.id]) await bridge.removeRegistryServer(pkg.id)
+    if (get().clawhubSkills[pkg.id]) await bridge.removeClawHubSkill(pkg.id)
     set((state) => {
       const { [pkg.id]: _removed, ...downloads } = state.downloads
       const { [pkg.id]: _removedServer, ...registryServers } = state.registryServers
+      const { [pkg.id]: _removedSkill, ...clawhubSkills } = state.clawhubSkills
       const ownedIds = new Set(owned.map((agent) => agent.id))
       const detach = (ids: string[]) => ids.filter((id) => id !== pkg.id)
       return {
         downloads,
         registryServers,
+        clawhubSkills,
         projects: owned.reduce((next, agent) => removeAgentFromProjects(next, agent.id), state.projects),
         agents: state.agents
           .filter((agent) => !ownedIds.has(agent.id))

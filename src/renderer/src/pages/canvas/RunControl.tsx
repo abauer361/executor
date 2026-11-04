@@ -12,6 +12,7 @@ function RunPanel() {
   const downloads = useApp((state) => state.downloads)
   const mcpSetups = useApp((state) => state.mcpSetups)
   const registry = useApp((state) => state.registryServers)
+  const clawhub = useApp((state) => state.clawhubSkills)
   const { beginRun, setUi } = useApp.getState()
   const [goal, setGoal] = useState(workflow.goal ?? '')
 
@@ -34,7 +35,7 @@ function RunPanel() {
   const problems = runProblems(workflow, agents, apiKeys)
   const canStart = goal.trim().length > 0 && problems.length === 0
   const unavailable = runWarnings(workflow, agents, downloads, mcpSetups, registry).map(
-    (id) => packageById(id, registry)?.name ?? id
+    (id) => packageById(id, registry, clawhub)?.name ?? id
   )
 
   return (

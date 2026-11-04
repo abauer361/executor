@@ -40,6 +40,15 @@ const browserPreview: ExecutorBridge = {
   },
   removeRegistryServer: async () => {},
   getRegistryServers: async () => ({}),
+  searchClawHub: async () => ({ entries: [], nextCursor: null }),
+  previewClawHubSkill: async () => {
+    throw new Error('ClawHub skills need the desktop app.')
+  },
+  installClawHubSkill: async () => {
+    throw new Error('ClawHub skills need the desktop app.')
+  },
+  removeClawHubSkill: async () => {},
+  getClawHubSkills: async () => ({}),
   onRunEvent: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

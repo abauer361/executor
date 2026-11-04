@@ -26,6 +26,11 @@ const bridge: ExecutorBridge = {
   installRegistryServer: (name, version) => ipcRenderer.invoke('registry:install', name, version),
   removeRegistryServer: (id) => ipcRenderer.invoke('registry:remove', id),
   getRegistryServers: () => ipcRenderer.invoke('registry:servers'),
+  searchClawHub: (query, cursor) => ipcRenderer.invoke('clawhub:search', query, cursor),
+  previewClawHubSkill: (owner, slug) => ipcRenderer.invoke('clawhub:preview', owner, slug),
+  installClawHubSkill: (owner, slug, version, sha256) => ipcRenderer.invoke('clawhub:install', owner, slug, version, sha256),
+  removeClawHubSkill: (id) => ipcRenderer.invoke('clawhub:remove', id),
+  getClawHubSkills: () => ipcRenderer.invoke('clawhub:skills'),
   onRunEvent: (listener) => {
     const handler = (_event: unknown, runEvent: RunEvent) => listener(runEvent)
     ipcRenderer.on('run:event', handler)

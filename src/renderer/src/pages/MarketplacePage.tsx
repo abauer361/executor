@@ -2,22 +2,34 @@ import { useMemo, useState } from 'react'
 import type { CatalogPackage, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon } from '../components/ui'
-import { CATALOG, KIND_LABEL, registryPackage } from '../data/catalog'
+import { CATALOG, installedPackages, KIND_LABEL } from '../data/catalog'
 import { serverState } from '../runState'
 import { useApp } from '../store'
 import { countOf } from '../usage'
+import { ClawHubBrowser } from './ClawHubBrowser'
 import { RegistryBrowser } from './RegistryBrowser'
 
-type Filter = 'all' | PackageKind | 'downloaded' | 'registry'
+type Filter = 'all' | 'agent' | 'workflow' | 'downloaded' | 'registry' | 'clawhub'
 
+// MCP Servers and Agent Skills browse the live MCP Registry and ClawHub. The built-in servers and
+// skills stay under All Resources and Downloaded.
 const FILTERS: { id: Filter; label: string; icon?: string }[] = [
   { id: 'all', label: 'All Resources' },
-  { id: 'mcp', label: 'MCP Servers', icon: 'hub' },
-  { id: 'skill', label: 'Agent Skills', icon: 'bolt' },
+  { id: 'registry', label: 'MCP Servers', icon: 'hub' },
+  { id: 'clawhub', label: 'Agent Skills', icon: 'bolt' },
   { id: 'agent', label: 'Prebuilt Agents', icon: 'precision_manufacturing' },
   { id: 'workflow', label: 'Agent Workflows', icon: 'account_tree' },
-  { id: 'downloaded', label: 'Downloaded', icon: 'download_done' },
-  { id: 'registry', label: 'MCP Registry', icon: 'public' }
+  { id: 'downloaded', label: 'Downloaded', icon: 'download_done' }
+]
+
+const LIVE: Filter[] = ['registry', 'clawhub']
+
+// The Downloaded tab groups what you have by type.
+const SECTIONS: { kind: PackageKind; label: string }[] = [
+  { kind: 'mcp', label: 'MCP Servers' },
+  { kind: 'skill', label: 'Agent Skills' },
+  { kind: 'agent', label: 'Prebuilt Agents' },
+  { kind: 'workflow', label: 'Agent Workflows' }
 ]
 
 const USE_HINT: Record<PackageKind, string> = {
@@ -176,13 +188,15 @@ function PackageCard({ pkg }: { pkg: CatalogPackage }) {
 export function MarketplacePage() {
   const downloads = useApp((state) => state.downloads)
   const registry = useApp((state) => state.registryServers)
+  const clawhub = useApp((state) => state.clawhubSkills)
   const [filter, setFilter] = useState<Filter>('all')
+  const [downloadedKind, setDownloadedKind] = useState<PackageKind | 'all'>('all')
   const [query, setQuery] = useState('')
 
   const matchesFilter = (pkg: CatalogPackage, id: Filter) =>
     id === 'all' || pkg.kind === id || (id === 'downloaded' && Boolean(downloads[pkg.id]))
 
-  const packages = useMemo(() => [...CATALOG, ...Object.values(registry).map(registryPackage)], [registry])
+  const packages = useMemo(() => [...CATALOG, ...installedPackages(registry, clawhub)], [registry, clawhub])
   const needle = query.trim().toLowerCase()
   const visible = packages.filter(
     (pkg) =>
@@ -223,7 +237,7 @@ export function MarketplacePage() {
             >
               {item.icon && <Icon name={item.icon} size={15} />}
               {item.label}
-              {item.id !== 'registry' && (
+              {!LIVE.includes(item.id) && (
                 <span className="mono">{packages.filter((pkg) => matchesFilter(pkg, item.id)).length}</span>
               )}
             </button>
@@ -232,6 +246,50 @@ export function MarketplacePage() {
 
         {filter === 'registry' ? (
           <RegistryBrowser query={query.trim()} />
+        ) : filter === 'clawhub' ? (
+          <ClawHubBrowser query={query.trim()} />
+        ) : filter === 'downloaded' ? (
+          <>
+            {visible.length > 0 && (
+              <div className="segmented downloaded-kinds" role="radiogroup" aria-label="Show downloaded">
+                {[{ kind: 'all' as const, label: 'All' }, ...SECTIONS].map(({ kind, label }) => {
+                  const count = kind === 'all' ? visible.length : visible.filter((pkg) => pkg.kind === kind).length
+                  if (count === 0 && kind !== downloadedKind) return null
+                  return (
+                    <button
+                      key={kind}
+                      type="button"
+                      role="radio"
+                      aria-checked={downloadedKind === kind}
+                      className={downloadedKind === kind ? 'is-on' : ''}
+                      onClick={() => setDownloadedKind(kind)}
+                    >
+                      {label}
+                      <span>{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {SECTIONS.map(({ kind, label }) => {
+              const group = visible.filter((pkg) => pkg.kind === kind)
+              if (group.length === 0 || (downloadedKind !== 'all' && downloadedKind !== kind)) return null
+              return (
+                <section key={kind} className="market-section" aria-label={label}>
+                  <div className="market-section-head">
+                    <span className="eyebrow">{label}</span>
+                    <span className="chip">{group.length}</span>
+                  </div>
+                  <div className="package-grid">
+                    {group.map((pkg) => (
+                      <PackageCard key={pkg.id} pkg={pkg} />
+                    ))}
+                  </div>
+                </section>
+              )
+            })}
+            {visible.length === 0 && <p className="empty">Nothing matches that search.</p>}
+          </>
         ) : (
           <>
             <div className="package-grid">

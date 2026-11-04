@@ -1,3 +1,4 @@
+import type { ClawHubEntry, ClawHubPreview, InstalledClawHubSkill } from './clawhub'
 import type { McpStoredSetup } from './mcpServers'
 import type { Provider } from './pricing'
 import type { InstalledRegistryServer, RegistryEntry } from './registry'
@@ -212,5 +213,10 @@ export interface ExecutorBridge {
   installRegistryServer(name: string, version: string): Promise<InstalledRegistryServer>
   removeRegistryServer(id: string): Promise<void>
   getRegistryServers(): Promise<Record<string, InstalledRegistryServer>>
+  searchClawHub(query: string, cursor?: string): Promise<{ entries: ClawHubEntry[]; nextCursor: string | null }>
+  previewClawHubSkill(owner: string, slug: string): Promise<ClawHubPreview>
+  installClawHubSkill(owner: string, slug: string, version: string, sha256: string): Promise<InstalledClawHubSkill>
+  removeClawHubSkill(id: string): Promise<void>
+  getClawHubSkills(): Promise<Record<string, InstalledClawHubSkill>>
   onRunEvent(listener: (event: RunEvent) => void): () => void
 }

@@ -1,3 +1,4 @@
+import type { InstalledClawHubSkill } from '../../../shared/clawhub'
 import { installCommand } from '../../../shared/mcpServers'
 import { SKILLS, skillPageUrl, type SkillSource } from '../../../shared/skills'
 import type { InstalledRegistryServer } from '../../../shared/registry'
@@ -256,7 +257,29 @@ export const registryPackage = ({ id, entry }: InstalledRegistryServer): Catalog
   install: entry.target
 })
 
-export function packageById(id: string, registry: Record<string, InstalledRegistryServer> = {}) {
+export const clawhubPackage = (skill: InstalledClawHubSkill): CatalogPackage => ({
+  id: skill.id,
+  kind: 'skill',
+  name: skill.name,
+  author: skill.owner,
+  summary: skill.summary,
+  tags: ['clawhub'],
+  repo: skill.url,
+  license: skill.license
+})
+
+// Everything downloaded from a live registry, shaped like the built-in catalog.
+export const installedPackages = (
+  registry: Record<string, InstalledRegistryServer>,
+  clawhub: Record<string, InstalledClawHubSkill>
+) => [...Object.values(registry).map(registryPackage), ...Object.values(clawhub).map(clawhubPackage)]
+
+export function packageById(
+  id: string,
+  registry: Record<string, InstalledRegistryServer> = {},
+  clawhub: Record<string, InstalledClawHubSkill> = {}
+) {
   const server = registry[id]
-  return CATALOG.find((pkg) => pkg.id === id) ?? (server && registryPackage(server))
+  const skill = clawhub[id]
+  return CATALOG.find((pkg) => pkg.id === id) ?? (server && registryPackage(server)) ?? (skill && clawhubPackage(skill))
 }

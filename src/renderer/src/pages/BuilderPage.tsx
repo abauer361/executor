@@ -3,7 +3,7 @@ import { PROVIDER_LABEL, providerOf, RUNNABLE_MODELS } from '../../../shared/pri
 import type { Agent, MemoryDoc, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon, RobotFace } from '../components/ui'
-import { CATALOG, packageById, registryPackage } from '../data/catalog'
+import { CATALOG, installedPackages, packageById } from '../data/catalog'
 import { MODELS } from '../data/models'
 import { serverState } from '../runState'
 import { useApp } from '../store'
@@ -208,10 +208,11 @@ function AttachButton({
 }) {
   const downloads = useApp((state) => state.downloads)
   const registry = useApp((state) => state.registryServers)
+  const clawhub = useApp((state) => state.clawhubSkills)
   const { updateDraft, setPage } = useApp.getState()
   const [open, setOpen] = useState(false)
 
-  const available = [...CATALOG, ...Object.values(registry).map(registryPackage)].filter(
+  const available = [...CATALOG, ...installedPackages(registry, clawhub)].filter(
     (pkg) => pkg.kind === kind && downloads[pkg.id] && !draft[field].includes(pkg.id)
   )
 
@@ -258,6 +259,7 @@ function AttachedList({ draft, field, emptyText }: { draft: Agent; field: 'mcpSe
   const downloads = useApp((state) => state.downloads)
   const mcpSetups = useApp((state) => state.mcpSetups)
   const registry = useApp((state) => state.registryServers)
+  const clawhub = useApp((state) => state.clawhubSkills)
   const { updateDraft, setUi } = useApp.getState()
   const ids = draft[field]
 
@@ -266,7 +268,7 @@ function AttachedList({ draft, field, emptyText }: { draft: Agent; field: 'mcpSe
   return (
     <div className={field === 'skills' ? 'attached-grid' : 'attached-list'}>
       {ids.map((id) => {
-        const pkg = packageById(id, registry)
+        const pkg = packageById(id, registry, clawhub)
         return (
           <div key={id} className="attached">
             <span className="stack grow">

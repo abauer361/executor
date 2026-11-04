@@ -42,7 +42,7 @@ An agent runs on the model picked in the Inspector, from any provider. Each agen
 
 ### The MCP Registry
 
-The MCP Registry tab in the Marketplace searches the public [MCP Registry](https://registry.modelcontextprotocol.io). Anyone can publish there and nobody reviews it, so:
+The MCP Servers tab in the Marketplace searches the public [MCP Registry](https://registry.modelcontextprotocol.io). Anyone can publish there and nobody reviews it, so:
 
 - Commands are built by the app from a validated package name and an exact version. Free-form launch fields from the registry are never used.
 - The entry is fetched again by the main process at install time, so the interface cannot change what runs.
@@ -50,7 +50,22 @@ The MCP Registry tab in the Marketplace searches the public [MCP Registry](https
 - Remote servers are preferred when an entry offers both, because no code runs on your Mac. Anything an agent sends to their tools goes to that address.
 - Registry servers cannot claim to be safe: every tool they offer asks for approval.
 
+The servers built into Executor are listed under All Resources and Downloaded.
+
 Docker packages, servers needing custom arguments or address values, and sign-in with OAuth are not supported yet. Those entries explain why they cannot be installed.
+
+### ClawHub skills
+
+The Agent Skills tab in the Marketplace searches [ClawHub](https://clawhub.ai), an open skill registry. Hundreds of malicious skills were found there in 2026, so:
+
+- Only skills that ClawHub has not flagged are listed, and a version installs only if ClawHub's scans marked it clean.
+- Install opens a review that shows the full `SKILL.md` an agent will read, its version, license, any scanner warnings and any files Executor will not load.
+- The main process reads the skill from ClawHub again at install time and refuses it if the text changed after you reviewed it.
+- Each skill is pinned to one version and its hash. A copy on disk that no longer matches is replaced before an agent sees it.
+- Before each run, ClawHub is asked again. A skill it now flags is left out and the logs say why. If ClawHub cannot be reached, the reviewed copy is used and the logs say so.
+- Only `SKILL.md` is downloaded, so a skill's scripts never run.
+
+The reviewed skills built into Executor are listed under All Resources and Downloaded.
 
 ### Approvals
 
@@ -78,7 +93,7 @@ Not yet:
 
 - **DeepSeek is not connected.** It stays in the list, marked as not connected.
 - **Routing covers Claude models only**, and picks one model per agent rather than per step.
-- **Skills, prebuilt agents and workflows come from built-in lists** in `src/shared/skills.ts` and `src/renderer/src/data/catalog.ts`. Only MCP servers have a live registry.
+- **Skills, prebuilt agents and workflows come from built-in lists** in `src/shared/skills.ts` and `src/renderer/src/data/catalog.ts`. MCP servers and ClawHub skills also have live registries.
 - **Skills are instructions only.** Only `SKILL.md` is downloaded, so scripts and reference files bundled with a skill are not available. MCP Builder, Skill Creator and Webapp Testing bundle such files.
 - **Memory docs must be text files** under 500 KB. Anything else is skipped and reported in the logs.
 - **The starting projects and agents are sample data**, labelled in the ribbon until a workflow's first real run.
@@ -91,4 +106,4 @@ Refused requests use Anthropic's server-side fallback on Opus and Sonnet. A fall
 
 The app is ad-hoc signed for use on this Mac. Sharing it with other people requires signing and notarizing it with an Apple Developer ID.
 
-Set `EXECUTOR_API_URL` or `EXECUTOR_REGISTRY_URL` to point the app at a local mock for testing. The app ignores `ANTHROPIC_BASE_URL` so that the saved key cannot be redirected.
+Set `EXECUTOR_API_URL`, `EXECUTOR_REGISTRY_URL` or `EXECUTOR_CLAWHUB_URL` to point the app at a local mock for testing. The app ignores `ANTHROPIC_BASE_URL` so that the saved key cannot be redirected.

@@ -6,6 +6,7 @@ import type { ApprovalDecision, CatalogPackage, KeyResult, PickedDoc, RunEvent, 
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
 import { installClawHubSkill, installedClawHubSkills, previewClawHubSkill, removeClawHubSkill, searchClawHub } from './clawhub'
 import { createModelClient, verifyApiKey } from './modelClients'
+import { listOpenRouterModels, replaceOpenRouterModels } from './openrouterClient'
 import { allServerSetups, removeServerSecrets, saveFolders, saveServerSecret } from './mcpSetup'
 import { installedServers, installServer, removeServer, searchRegistry } from './registry'
 import { launchRun, type RunHandle } from './runEngine'
@@ -37,6 +38,12 @@ function isWebUrl(url: string) {
   } catch {
     return false
   }
+}
+
+async function refreshOpenRouterModels(key: string) {
+  const models = await listOpenRouterModels(key)
+  replaceOpenRouterModels(models)
+  return models
 }
 
 function registerIpc() {
@@ -92,13 +99,23 @@ function registerIpc() {
     if (result.ok) await saveApiKey(provider, key)
     return result
   })
+  ipcMain.handle('openrouter:models', async () => {
+    const { openrouter } = await loadApiKeys()
+    return openrouter ? refreshOpenRouterModels(openrouter) : []
+  })
 
   ipcMain.handle('run:start', async (event, request: RunRequest) => {
     const { sender } = event
     const emit = (runEvent: RunEvent) => {
       if (!sender.isDestroyed()) sender.send('run:event', runEvent)
     }
-    const handle = launchRun(request, createModelClient(await loadApiKeys()), createAgentEnvironment(), emit)
+    const keys = await loadApiKeys()
+    if (keys.openrouter) {
+      await refreshOpenRouterModels(keys.openrouter).catch((error) =>
+        console.error('Could not refresh OpenRouter models, so the last list is used', error)
+      )
+    }
+    const handle = launchRun(request, createModelClient(keys), createAgentEnvironment(), emit)
     runs.set(request.runId, handle)
     void handle.done.finally(() => runs.delete(request.runId))
   })

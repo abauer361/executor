@@ -25,8 +25,6 @@ const MODELS_WITH_FALLBACK = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
 // Pinned because the SDK otherwise follows ANTHROPIC_BASE_URL, which could send the saved key elsewhere.
 const API_URL = process.env.EXECUTOR_API_URL ?? 'https://api.anthropic.com'
 
-const MAX_UNPARSEABLE_RETRIES = 2
-
 const ROUTER_MODEL = 'claude-haiku-5-5'
 const ROUTER_MAX_TOKENS = 1024
 const REASON_LIMIT = 140
@@ -149,56 +147,53 @@ export function createAnthropicClient(apiKey: string) {
         },
 
         async turn(maxTokens, signal, onProgress) {
-          for (let attempt = 0; ; attempt += 1) {
-            try {
-              const stream = client.beta.messages.stream(
-                {
-                  model,
-                  max_tokens: maxTokens,
-                  system,
-                  messages,
-                  cache_control: { type: 'ephemeral' },
-                  thinking: { type: 'adaptive', display: 'summarized' },
-                  output_config: { effort: 'high' },
-                  ...(tools.length
-                    ? { tools: tools.map((tool) => ({ ...apiTool(tool), eager_input_streaming: true })) }
-                    : {}),
-                  ...(MODELS_WITH_FALLBACK.has(model)
-                    ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
-                    : {})
-                },
-                { signal }
-              )
+          try {
+            const stream = client.beta.messages.stream(
+              {
+                model,
+                max_tokens: maxTokens,
+                system,
+                messages,
+                cache_control: { type: 'ephemeral' },
+                thinking: { type: 'adaptive', display: 'summarized' },
+                output_config: { effort: 'high' },
+                ...(tools.length
+                  ? { tools: tools.map((tool) => ({ ...apiTool(tool), eager_input_streaming: true })) }
+                  : {}),
+                ...(MODELS_WITH_FALLBACK.has(model)
+                  ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
+                  : {})
+              },
+              { signal }
+            )
 
-              for await (const event of stream) {
-                if (event.type === 'content_block_start') {
-                  if (event.content_block.type === 'thinking') onProgress({ type: 'phase', phase: 'thinking' })
-                  if (event.content_block.type === 'text') onProgress({ type: 'phase', phase: 'writing' })
-                } else if (event.type === 'content_block_delta') {
-                  if (event.delta.type === 'thinking_delta') {
-                    onProgress({ type: 'thinking', chars: event.delta.thinking.length })
-                  } else if (event.delta.type === 'text_delta') {
-                    onProgress({ type: 'text', text: event.delta.text })
-                  }
+            for await (const event of stream) {
+              if (event.type === 'content_block_start') {
+                if (event.content_block.type === 'thinking') onProgress({ type: 'phase', phase: 'thinking' })
+                if (event.content_block.type === 'text') onProgress({ type: 'phase', phase: 'writing' })
+              } else if (event.type === 'content_block_delta') {
+                if (event.delta.type === 'thinking_delta') {
+                  onProgress({ type: 'thinking', chars: event.delta.thinking.length })
+                } else if (event.delta.type === 'text_delta') {
+                  onProgress({ type: 'text', text: event.delta.text })
                 }
               }
-
-              const message = await stream.finalMessage()
-              const content = replayableContent(message.content)
-              const toolUses = content.flatMap((block): ModelToolUse[] =>
-                block.type === 'tool_use' ? [{ id: block.id, name: block.name, input: block.input }] : []
-              )
-              if (toolUses.length) messages.push({ role: 'assistant', content: content as BetaContentBlockParam[] })
-              return {
-                text: content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
-                toolUses,
-                stopReason: message.stop_reason,
-                usage: billedUsage(message, model)
-              }
-            } catch (error) {
-              // Anything that is not an API error here is a tool input that could not be parsed.
-              if (error instanceof Anthropic.APIError || attempt >= MAX_UNPARSEABLE_RETRIES) throw explain(error)
             }
+
+            const message = await stream.finalMessage()
+            const content = replayableContent(message.content)
+            const toolUses = content.flatMap((block): ModelToolUse[] =>
+              block.type === 'tool_use' ? [{ id: block.id, name: block.name, input: block.input }] : []
+            )
+            if (toolUses.length) messages.push({ role: 'assistant', content: content as BetaContentBlockParam[] })
+            return {
+              text: content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(''),
+              toolUses,
+              stopReason: message.stop_reason,
+              usage: billedUsage(message, model)
+            }
+          } catch (error) {
+            throw explain(error)
           }
         },
 

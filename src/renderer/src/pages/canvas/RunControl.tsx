@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { Icon, Kbd } from '../../components/ui'
 import { packageById } from '../../data/catalog'
 import { runProblems, runSpendCeiling, runWarnings } from '../../runState'
-import { activeWorkflow, useApp } from '../../store'
+import { activeWorkflow, openRouterIds, useApp } from '../../store'
 import { countOf, formatDollars } from '../../usage'
 
 function RunPanel() {
   const workflow = useApp(activeWorkflow)
   const agents = useApp((state) => state.agents)
   const apiKeys = useApp((state) => state.apiKeys)
+  const listed = useApp(openRouterIds)
   const downloads = useApp((state) => state.downloads)
   const mcpSetups = useApp((state) => state.mcpSetups)
   const registry = useApp((state) => state.registryServers)
@@ -32,7 +33,7 @@ function RunPanel() {
     )
   }
 
-  const problems = runProblems(workflow, agents, apiKeys)
+  const problems = runProblems(workflow, agents, apiKeys, listed)
   const canStart = goal.trim().length > 0 && problems.length === 0
   const unavailable = runWarnings(workflow, agents, downloads, mcpSetups, registry).map(
     (id) => packageById(id, registry, clawhub)?.name ?? id
@@ -72,7 +73,7 @@ function RunPanel() {
       )}
       <div className="row">
         <span className="mono muted grow">
-          {countOf(workflow.nodes.length, 'agent')} · limits cap it at {formatDollars(runSpendCeiling(workflow, agents))}
+          {countOf(workflow.nodes.length, 'agent')} · limits cap it at {formatDollars(runSpendCeiling(workflow, agents, listed))}
         </span>
         <Kbd>⌘↵</Kbd>
       </div>

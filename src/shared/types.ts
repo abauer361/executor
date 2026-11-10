@@ -188,6 +188,15 @@ export interface KeyResult {
   message?: string
 }
 
+// Prices are dollars per million tokens, like RATES in pricing.ts.
+export interface OpenRouterModel {
+  id: string
+  name: string
+  contextLength: number
+  promptPerMillion: number
+  completionPerMillion: number
+}
+
 export interface ExecutorBridge {
   platform: string
   loadState(): Promise<string | null>
@@ -200,6 +209,7 @@ export interface ExecutorBridge {
   apiKeyStatus(): Promise<Record<Provider, boolean>>
   saveApiKey(provider: Provider, key: string): Promise<KeyResult>
   removeApiKey(provider: Provider): Promise<void>
+  listOpenRouterModels(): Promise<OpenRouterModel[]>
   startRun(request: RunRequest): Promise<void>
   stopRun(runId: string): Promise<void>
   injectInstruction(runId: string, nodeId: string, text: string): Promise<void>

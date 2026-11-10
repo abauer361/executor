@@ -336,6 +336,13 @@ export function launchRun(
       emit({ type: 'output', runId, nodeId: node.id, text: replies.join('\n\n') })
       emit({ type: 'usage', runId, nodeId: node.id, tokens: totalTokens(usage), cost: totalCost(usage) })
 
+      const recorded = { tokens: totalTokens(usage), cost: totalCost(usage) }
+      if (outputAllowance(node.limiter, model, 0, recorded) < 0) {
+        setNode(node, 'stopped', limitMessage)
+        log(node, `${limitMessage}: this step passed the limit, so its tools were not run and its reply was not passed on`)
+        return 'halted'
+      }
+
       if (result.stopReason === 'refusal') {
         setNode(node, 'stopped', 'Declined by the model')
         log(node, 'The model declined this request, so its partial output was not passed on')
@@ -357,7 +364,7 @@ export function launchRun(
       }
 
       if (result.toolUses.length === 0) {
-        outputs.set(node.id, result.text)
+        outputs.set(node.id, replies.join('\n\n'))
         setNode(node, 'idle', 'Done')
         log(node, 'Finished')
         return 'completed'

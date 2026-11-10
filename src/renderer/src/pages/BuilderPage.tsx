@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PROVIDER_LABEL, providerOf, RUNNABLE_MODELS } from '../../../shared/pricing'
+import { PROVIDER_LABEL } from '../../../shared/pricing'
 import type { Agent, MemoryDoc, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon, RobotFace } from '../components/ui'
@@ -7,7 +7,7 @@ import { CATALOG, installedPackages, packageById } from '../data/catalog'
 import { MODELS } from '../data/models'
 import { serverState } from '../runState'
 import { useApp } from '../store'
-import { agentSummary } from '../usage'
+import { agentSummary, formatTokens } from '../usage'
 
 const TOKEN_PRESETS = [25_000, 50_000, 100_000, 250_000, 500_000]
 const DOLLAR_PRESETS = [1, 5, 10, 25, 50]
@@ -96,6 +96,52 @@ function Section({
   )
 }
 
+function OpenRouterPool({ draft, toggle }: { draft: Agent; toggle(id: string): void }) {
+  const listed = useApp((state) => state.openRouterModels)
+  const [query, setQuery] = useState('')
+  const needle = query.trim().toLowerCase()
+  const visible = needle
+    ? listed.filter((model) => model.name.toLowerCase().includes(needle) || model.id.includes(needle))
+    : listed
+
+  if (listed.length === 0) return null
+
+  return (
+    <>
+      <div className="form-section-head">
+        <span className="eyebrow">OpenRouter</span>
+        <div className="field-icon">
+          <Icon name="search" />
+          <input
+            className="input"
+            value={query}
+            placeholder={`Filter ${listed.length} models...`}
+            aria-label="Filter OpenRouter models"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+      </div>
+      <div className="model-grid">
+        {visible.map((model) => {
+          const checked = draft.models.includes(model.id)
+          return (
+            <label key={model.id} className={`model-card ${checked ? 'is-on' : ''}`}>
+              <span className="row">
+                <span className="chip grow-chip">{formatTokens(model.contextLength)} context</span>
+                <input className="check" type="checkbox" checked={checked} onChange={() => toggle(model.id)} />
+              </span>
+              <span className="strong truncate" title={model.id}>
+                {model.name}
+              </span>
+              <span className="mono faint">OpenRouter</span>
+            </label>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
 function ModelPool({ draft }: { draft: Agent }) {
   const { updateDraft } = useApp.getState()
 
@@ -117,12 +163,13 @@ function ModelPool({ draft }: { draft: Agent }) {
               </span>
               <span className="strong truncate">{model.name}</span>
               <span className="mono faint">
-                {RUNNABLE_MODELS.includes(model.id) ? `${PROVIDER_LABEL[providerOf(model.id)]} · ${model.focus}` : 'Not connected yet'}
+                {model.runnable && model.provider ? `${PROVIDER_LABEL[model.provider]} · ${model.focus}` : 'Not connected yet'}
               </span>
             </label>
           )
         })}
       </div>
+      <OpenRouterPool draft={draft} toggle={toggle} />
       <p className="note">
         <Icon name="auto_awesome" size={15} />
         Runs use the model picked in the Inspector. With two or more Claude models here, choose Auto there to let a

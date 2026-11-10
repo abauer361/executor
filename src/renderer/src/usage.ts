@@ -1,3 +1,4 @@
+import { NO_IDS, routeProvider } from '../../shared/models'
 import { CLAUDE_MODELS, RUNNABLE_MODELS } from '../../shared/pricing'
 import type { Agent, LogEntry, NodeRun, Workflow, WorkflowStatus } from '../../shared/types'
 
@@ -35,10 +36,13 @@ export const AUTO_MODEL = 'auto'
 // Routing is a Claude call choosing between Claude models.
 export const routableModels = (agent: Agent) => agent.models.filter((model) => CLAUDE_MODELS.includes(model))
 
+export const isRunnable = (model: string, openRouterIds: ReadonlySet<string> = NO_IDS) =>
+  RUNNABLE_MODELS.includes(model) || routeProvider(model, openRouterIds) === 'openrouter'
+
 // Runs use the model picked in the Inspector, or the first connected model in the pool.
-export function runnableModel(agent: Agent, activeModel: string) {
-  if (RUNNABLE_MODELS.includes(activeModel) && agent.models.includes(activeModel)) return activeModel
-  return agent.models.find((model) => RUNNABLE_MODELS.includes(model)) ?? null
+export function runnableModel(agent: Agent, activeModel: string, openRouterIds: ReadonlySet<string> = NO_IDS) {
+  if (isRunnable(activeModel, openRouterIds) && agent.models.includes(activeModel)) return activeModel
+  return agent.models.find((model) => isRunnable(model, openRouterIds)) ?? null
 }
 
 export function workflowStatus(workflow: Workflow): WorkflowStatus {

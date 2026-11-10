@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { RUNNABLE_MODELS } from '../../../../shared/pricing'
 import type { PendingApproval } from '../../../../shared/types'
 import { Icon, Kbd, RobotFace, StatusDot } from '../../components/ui'
 import { modelName } from '../../data/models'
-import { activeWorkflow, useApp, type BuilderSection } from '../../store'
-import { AUTO_MODEL, budgetShare, formatDollars, formatTokens, routableModels, runnableModel } from '../../usage'
+import { activeWorkflow, openRouterIds, useApp, type BuilderSection } from '../../store'
+import { AUTO_MODEL, budgetShare, formatDollars, formatTokens, isRunnable, routableModels, runnableModel } from '../../usage'
 
 const STATUS_NAME = { active: 'Active', queued: 'Queued', warning: 'Waiting', stopped: 'Stopped', idle: 'Idle' }
 
@@ -58,6 +57,8 @@ export function Inspector() {
   const open = useApp((state) => state.inspectorOpen)
   const workflow = useApp(activeWorkflow)
   const agents = useApp((state) => state.agents)
+  const listed = useApp((state) => state.openRouterModels)
+  const listedIds = useApp(openRouterIds)
   const { setUi, openBuilder, inject, setNodeModel } = useApp.getState()
   const [instruction, setInstruction] = useState('')
 
@@ -94,7 +95,7 @@ export function Inspector() {
   const activity = workflow.log.filter((entry) => entry.nodeId === node.id).slice(-30).reverse()
   const canRoute = routableModels(agent).length > 1
   const isAuto = canRoute && node.data.activeModel === AUTO_MODEL
-  const model = isAuto ? AUTO_MODEL : (runnableModel(agent, node.data.activeModel) ?? node.data.activeModel)
+  const model = isAuto ? AUTO_MODEL : (runnableModel(agent, node.data.activeModel, listedIds) ?? node.data.activeModel)
   const edit = (section: BuilderSection) => openBuilder(agent.id, section)
   const alreadyStarted = workflow.running && node.data.status !== 'queued'
   const approvals = (workflow.approvals ?? []).filter((approval) => approval.nodeId === node.id)
@@ -142,14 +143,14 @@ export function Inspector() {
             >
               {canRoute && <option value={AUTO_MODEL}>Auto</option>}
               {agent.models.map((id) => (
-                <option key={id} value={id} disabled={!RUNNABLE_MODELS.includes(id)}>
-                  {modelName(id)}
+                <option key={id} value={id} disabled={!isRunnable(id, listedIds)}>
+                  {modelName(id, listed)}
                 </option>
               ))}
             </select>
           </div>
           {isAuto && node.data.routedModel && (
-            <p className="mono muted">Auto picked {modelName(node.data.routedModel)}</p>
+            <p className="mono muted">Auto picked {modelName(node.data.routedModel, listed)}</p>
           )}
         </section>
 

@@ -13,6 +13,7 @@ const bridge: ExecutorBridge = {
   apiKeyStatus: () => ipcRenderer.invoke('key:status'),
   saveApiKey: (provider, key) => ipcRenderer.invoke('key:save', provider, key),
   removeApiKey: (provider) => ipcRenderer.invoke('key:remove', provider),
+  listOpenRouterModels: () => ipcRenderer.invoke('openrouter:models'),
   startRun: (request) => ipcRenderer.invoke('run:start', request),
   stopRun: (runId) => ipcRenderer.invoke('run:stop', runId),
   injectInstruction: (runId, nodeId, text) => ipcRenderer.invoke('run:inject', runId, nodeId, text),

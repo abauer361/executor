@@ -94,10 +94,26 @@ describe('runProblems', () => {
   })
 
   it('names the key a model needs', () => {
-    const keys = { anthropic: true, openai: false, google: true }
+    const keys = { anthropic: true, openai: false, google: true, openrouter: false }
     const gpt = node('a')
     gpt.data.activeModel = 'gpt-6.1-sol'
     expect(runProblems(workflow([gpt]), [agent({ models: ['gpt-6.1-sol'] })], keys)[0]).toContain('your OpenAI API key')
+  })
+
+  it('asks for the OpenRouter key for a model OpenRouter hosts', () => {
+    const keys = { anthropic: true, openai: true, google: true, openrouter: false }
+    const hosted = node('a')
+    hosted.data.activeModel = 'openai/gpt-4o'
+    const agents = [agent({ models: ['openai/gpt-4o'] })]
+    expect(runProblems(workflow([hosted]), agents, keys, new Set(['openai/gpt-4o']))[0]).toContain(
+      'your OpenRouter API key'
+    )
+  })
+
+  it('still asks for the Anthropic key for a Claude model when only OpenRouter is saved', () => {
+    const keys = { anthropic: false, openai: false, google: false, openrouter: true }
+    const listed = new Set(['claude-sonnet-5-5', 'openai/gpt-4o'])
+    expect(runProblems(workflow([node('a')]), [agent()], keys, listed)[0]).toContain('your Anthropic API key')
   })
 
   it('passes a runnable workflow', () => {

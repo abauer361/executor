@@ -1,5 +1,5 @@
 import type { InstalledClawHubSkill } from '../../../shared/clawhub'
-import { installCommand } from '../../../shared/mcpServers'
+import { BUILTIN_MCP_IDS, builtInServer, installCommand, type BuiltInMcpId } from '../../../shared/mcpServers'
 import { SKILLS, skillPageUrl, type SkillSource } from '../../../shared/skills'
 import type { InstalledRegistryServer } from '../../../shared/registry'
 import type { AgentTemplate, CatalogPackage, PackageKind } from '../../../shared/types'
@@ -78,95 +78,86 @@ const skillPackage = (skill: SkillSource): CatalogPackage => ({
   license: skill.license
 })
 
-export const CATALOG: CatalogPackage[] = [
-  {
-    id: 'filesystem',
-    kind: 'mcp',
+interface McpCard {
+  name: string
+  author: string
+  summary: string
+  tags: string[]
+  repo: string
+}
+
+const MCP_CARDS: Record<BuiltInMcpId, McpCard> = {
+  filesystem: {
     name: 'Filesystem',
     author: 'modelcontextprotocol',
     summary: 'Read, write and search local files inside the directories you allow.',
     tags: ['files', 'local'],
-    repo: MCP_REPO,
-    transport: 'stdio',
-    install: installCommand('filesystem')
+    repo: MCP_REPO
   },
-  {
-    id: 'github',
-    kind: 'mcp',
+  github: {
     name: 'GitHub',
     author: 'github',
     summary: 'Work with repositories, issues, pull requests and Actions through the GitHub API.',
     tags: ['github', 'code', 'ci'],
-    repo: 'https://github.com/github/github-mcp-server',
-    transport: 'stdio',
-    install: installCommand('github')
+    repo: 'https://github.com/github/github-mcp-server'
   },
-  {
-    id: 'git',
-    kind: 'mcp',
+  git: {
     name: 'Git',
     author: 'modelcontextprotocol',
     summary: 'Read, search and change local Git repositories.',
     tags: ['git', 'local'],
-    repo: MCP_REPO,
-    transport: 'stdio',
-    install: installCommand('git')
+    repo: MCP_REPO
   },
-  {
-    id: 'fetch',
-    kind: 'mcp',
+  fetch: {
     name: 'Fetch',
     author: 'modelcontextprotocol',
     summary: 'Fetch web pages and convert them to Markdown for agents to read.',
     tags: ['web'],
-    repo: MCP_REPO,
-    transport: 'stdio',
-    install: installCommand('fetch')
+    repo: MCP_REPO
   },
-  {
-    id: 'memory',
-    kind: 'mcp',
+  memory: {
     name: 'Memory',
     author: 'modelcontextprotocol',
     summary: 'Persistent memory for agents, stored as a local knowledge graph.',
     tags: ['memory'],
-    repo: MCP_REPO,
-    transport: 'stdio',
-    install: installCommand('memory')
+    repo: MCP_REPO
   },
-  {
-    id: 'sequential-thinking',
-    kind: 'mcp',
+  'sequential-thinking': {
     name: 'Sequential Thinking',
     author: 'modelcontextprotocol',
     summary: 'Structured, step-by-step problem solving that can revise earlier steps.',
     tags: ['reasoning'],
-    repo: MCP_REPO,
-    transport: 'stdio',
-    install: installCommand('sequential-thinking')
+    repo: MCP_REPO
   },
-  {
-    id: 'time',
-    kind: 'mcp',
+  time: {
     name: 'Time',
     author: 'modelcontextprotocol',
     summary: 'Current time and timezone conversion.',
     tags: ['utility'],
-    repo: MCP_REPO,
-    transport: 'stdio',
-    install: installCommand('time')
+    repo: MCP_REPO
   },
-  {
-    id: 'playwright',
-    kind: 'mcp',
+  playwright: {
     name: 'Playwright',
     author: 'microsoft',
     summary: 'Drive a real browser through page structure instead of screenshots.',
     tags: ['browser', 'testing'],
-    repo: 'https://github.com/microsoft/playwright-mcp',
-    transport: 'stdio',
-    install: installCommand('playwright')
-  },
+    repo: 'https://github.com/microsoft/playwright-mcp'
+  }
+}
+
+const mcpPackage = (id: BuiltInMcpId): CatalogPackage => {
+  const spec = builtInServer(id)
+  return {
+    id,
+    kind: 'mcp',
+    ...MCP_CARDS[id],
+    transport: spec.remoteUrl ? 'http' : 'stdio',
+    install: installCommand(id)
+  }
+}
+
+export const CATALOG: CatalogPackage[] = [
+  ...BUILTIN_MCP_IDS.map(mcpPackage),
   ...SKILLS.map(skillPackage),
   {
     id: 'pr-review-daemon',

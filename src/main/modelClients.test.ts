@@ -1,10 +1,12 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { ModelSession, ToolResult } from './runEngine'
+import type { KeyResult } from '../shared/types'
+import type { AgentTool, ModelSession, ToolResult } from './runEngine'
 
 interface Received {
   path: string
+  auth?: string
   body: Record<string, any>
 }
 
@@ -13,6 +15,8 @@ let scripts: Record<string, unknown>[][] = []
 let server: Server
 let openai: (model: string) => ModelSession
 let gemini: (model: string) => ModelSession
+let openrouter: (model: string, tools?: AgentTool[]) => ModelSession
+let verifyOpenRouter: (key: string) => Promise<KeyResult>
 
 const signal = new AbortController().signal
 const quiet = () => {}
@@ -34,7 +38,14 @@ beforeAll(async () => {
     let raw = ''
     for await (const chunk of req) raw += chunk
     const path = new URL(req.url ?? '/', 'http://local').pathname
-    received.push({ path, body: raw ? JSON.parse(raw) : {} })
+    received.push({ path, auth: req.headers.authorization, body: raw ? JSON.parse(raw) : {} })
+
+    if (path === '/openrouter/key') {
+      const ok = req.headers.authorization === 'Bearer good'
+      res.writeHead(ok ? 200 : 401, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(ok ? { data: { label: 'test' } } : { error: { message: 'User not found.', code: 401 } }))
+      return
+    }
 
     if (path.endsWith(':countTokens') || path.endsWith('/input_tokens')) {
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -51,13 +62,17 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 
-  // Both clients read their pinned address when they load.
+  // The clients read their pinned address when they load.
   process.env.EXECUTOR_OPENAI_URL = `${url}/v1`
   process.env.EXECUTOR_GOOGLE_URL = url
+  process.env.EXECUTOR_OPENROUTER_URL = `${url}/openrouter`
   const { createOpenAIClient } = await import('./openaiClient')
   const { createGeminiClient } = await import('./geminiClient')
+  const { createOpenRouterClient, verifyOpenRouterKey } = await import('./openrouterClient')
   openai = (model) => createOpenAIClient('test').startSession({ ...config, model })
   gemini = (model) => createGeminiClient('test').startSession({ ...config, model })
+  openrouter = (model, tools = []) => createOpenRouterClient('good').startSession({ ...config, model, tools })
+  verifyOpenRouter = verifyOpenRouterKey
 })
 
 afterAll(() => {
@@ -222,5 +237,84 @@ describe('Gemini session', () => {
   it('surfaces errors from the stream', async () => {
     scripts = [[created('int_1'), { event_type: 'error', error: { message: 'Overloaded' } }]]
     await expect(gemini('gemini-3.8-flash').turn(500, signal, quiet)).rejects.toThrow('Overloaded')
+  })
+})
+
+describe('OpenRouter session', () => {
+  const tool: AgentTool = {
+    name: 'files__read',
+    label: 'files read',
+    description: 'Read a file',
+    inputSchema: { type: 'object' },
+    needsApproval: false,
+    validate: () => null,
+    call: async () => ({ content: [], isError: false })
+  }
+  const chunk = (delta: Record<string, unknown>, finish: string | null = null) => ({
+    choices: [{ index: 0, delta, finish_reason: finish }]
+  })
+  const callDelta = (part: Record<string, unknown>) => chunk({ tool_calls: [{ index: 0, ...part }] })
+
+  it('checks the key against /key on the pinned address', async () => {
+    expect(await verifyOpenRouter('good')).toEqual({ ok: true })
+    const rejected = await verifyOpenRouter('bad')
+    expect(rejected.ok).toBe(false)
+    expect(rejected.message).toContain('OpenRouter rejected your API key')
+    expect(received.map(({ path, auth }) => [path, auth])).toEqual([
+      ['/openrouter/key', 'Bearer good'],
+      ['/openrouter/key', 'Bearer bad']
+    ])
+  })
+
+  it('assembles streamed tool call deltas and bills the reported usage', async () => {
+    scripts = [
+      [
+        chunk({ role: 'assistant', content: 'Reading' }),
+        callDelta({ id: 'call_1', type: 'function', function: { name: 'files__read', arguments: '{"pa' } }),
+        callDelta({ function: { arguments: 'th":"a"}' } }),
+        chunk({}, 'tool_calls'),
+        { choices: [], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } }
+      ],
+      [chunk({ content: 'Done' }, 'stop')]
+    ]
+    const session = openrouter('openai/gpt-4o', [tool])
+
+    const first = await session.turn(500, signal, quiet)
+    expect(first.text).toBe('Reading')
+    expect(first.toolUses).toEqual([{ id: 'call_1', name: 'files__read', input: { path: 'a' } }])
+    expect(first.stopReason).not.toMatch(/max_tokens|refusal/)
+    expect(first.usage).toEqual([{ model: 'openai/gpt-4o', inputTokens: 100, outputTokens: 20 }])
+
+    session.addToolResults([toolResult])
+    const second = await session.turn(500, signal, quiet)
+    expect(second.usage).toEqual([{ model: 'openai/gpt-4o', inputTokens: 0, outputTokens: 0 }])
+
+    expect(received[0]).toMatchObject({
+      path: '/openrouter/chat/completions',
+      body: { model: 'openai/gpt-4o', stream: true, stream_options: { include_usage: true }, max_tokens: 500 }
+    })
+    const { messages } = received[1].body
+    expect(messages.slice(2, 4)).toEqual([
+      {
+        role: 'assistant',
+        content: 'Reading',
+        tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'files__read', arguments: '{"path":"a"}' } }]
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: 'Read it' }
+    ])
+    expect(messages[4].content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } })
+  })
+
+  it('reports why a reply stopped', async () => {
+    scripts = [[chunk({ content: 'Par' }, 'length')], [chunk({}, 'content_filter')]]
+    const stops = []
+    for (let turn = 0; turn < 2; turn += 1) stops.push((await openrouter('openai/gpt-4o').turn(500, signal, quiet)).stopReason)
+    expect(stops).toEqual(['max_tokens', 'refusal'])
+  })
+
+  it('keeps unreadable tool input for the model to fix', async () => {
+    scripts = [[callDelta({ id: 'call_1', function: { name: 'files__read', arguments: '{"path":' } }), chunk({}, 'tool_calls')]]
+    const { toolUses } = await openrouter('openai/gpt-4o').turn(500, signal, quiet)
+    expect(toolUses[0].input).toEqual({ INVALID_JSON: '{"path":' })
   })
 })

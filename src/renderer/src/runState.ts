@@ -1,4 +1,5 @@
-import { PROVIDER_LABEL, providerOf, spendCeiling, type Provider } from '../../shared/pricing'
+import { NO_IDS, routeProvider } from '../../shared/models'
+import { PROVIDER_LABEL, spendCeiling, type Provider } from '../../shared/pricing'
 import { MCP_SERVERS, missingSettings, type McpServerSpec, type McpStoredSetup } from '../../shared/mcpServers'
 import type { InstalledRegistryServer } from '../../shared/registry'
 import { hasCycle } from '../../shared/runGraph'
@@ -33,9 +34,14 @@ const OUTCOME_MESSAGE: Record<RunOutcome, string> = {
 const agentFor = (node: WorkflowNode, agents: Agent[]) =>
   agents.find((candidate) => candidate.id === node.data.agentId)
 
-const ALL_KEYS: Record<Provider, boolean> = { anthropic: true, openai: true, google: true }
+const ALL_KEYS: Record<Provider, boolean> = { anthropic: true, openai: true, google: true, openrouter: true }
 
-export function runProblems(workflow: Workflow, agents: Agent[], keys: Record<Provider, boolean> = ALL_KEYS) {
+export function runProblems(
+  workflow: Workflow,
+  agents: Agent[],
+  keys: Record<Provider, boolean> = ALL_KEYS,
+  openRouterIds: ReadonlySet<string> = NO_IDS
+) {
   const problems: string[] = []
   const ids = workflow.nodes.map((node) => node.id)
   if (hasCycle(ids, workflow.edges)) {
@@ -47,8 +53,8 @@ export function runProblems(workflow: Workflow, agents: Agent[], keys: Record<Pr
       problems.push('An agent on this canvas no longer exists.')
       continue
     }
-    const model = runnableModel(agent, node.data.activeModel)
-    const provider = node.data.activeModel === AUTO_MODEL ? 'anthropic' : model && providerOf(model)
+    const model = runnableModel(agent, node.data.activeModel, openRouterIds)
+    const provider = node.data.activeModel === AUTO_MODEL ? 'anthropic' : model && routeProvider(model, openRouterIds)
     if (!provider) problems.push(`${agent.name} has no connected model.`)
     else if (!keys[provider]) problems.push(`${agent.name} needs your ${PROVIDER_LABEL[provider]} API key.`)
   }
@@ -91,24 +97,33 @@ export function runWarnings(
 }
 
 // The most this run could cost if every agent used its full limit.
-export function runSpendCeiling(workflow: Workflow, agents: Agent[]) {
+export function runSpendCeiling(workflow: Workflow, agents: Agent[], openRouterIds: ReadonlySet<string> = NO_IDS) {
   return workflow.nodes.reduce((sum, node) => {
     const agent = agentFor(node, agents)
     if (!agent) return sum
-    const pool = node.data.activeModel === AUTO_MODEL ? routableModels(agent) : [runnableModel(agent, node.data.activeModel)]
+    const pool =
+      node.data.activeModel === AUTO_MODEL
+        ? routableModels(agent)
+        : [runnableModel(agent, node.data.activeModel, openRouterIds)]
     const ceilings = pool.flatMap((model) => (model ? [spendCeiling(agent.limiter, model)] : []))
     return sum + Math.max(0, ...ceilings)
   }, 0)
 }
 
-export function buildRunRequest(workflow: Workflow, agents: Agent[], goal: string, runId: string): RunRequest {
+export function buildRunRequest(
+  workflow: Workflow,
+  agents: Agent[],
+  goal: string,
+  runId: string,
+  openRouterIds: ReadonlySet<string> = NO_IDS
+): RunRequest {
   return {
     runId,
     goal,
     edges: workflow.edges.map(({ source, target }) => ({ source, target })),
     nodes: workflow.nodes.flatMap((node) => {
       const agent = agentFor(node, agents)
-      const model = agent && runnableModel(agent, node.data.activeModel)
+      const model = agent && runnableModel(agent, node.data.activeModel, openRouterIds)
       if (!agent || !model) return []
       return [
         {

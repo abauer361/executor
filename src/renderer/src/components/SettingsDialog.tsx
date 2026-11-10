@@ -122,7 +122,8 @@ function ServerSettings({ id }: { id: string }) {
 const KEY_PAGES: Record<Provider, { name: string; url: string }> = {
   anthropic: { name: 'Claude Console', url: 'https://platform.claude.com/settings/keys' },
   openai: { name: 'OpenAI dashboard', url: 'https://platform.openai.com/api-keys' },
-  google: { name: 'Google AI Studio', url: 'https://aistudio.google.com/apikey' }
+  google: { name: 'Google AI Studio', url: 'https://aistudio.google.com/apikey' },
+  openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/keys' }
 }
 
 function ProviderKey({ provider, autoFocus }: { provider: Provider; autoFocus: boolean }) {
@@ -214,11 +215,13 @@ function SettingsPanel() {
           <span className="eyebrow">Model providers</span>
           <p className="muted">
             Agents run through your own accounts, and runs are billed there. Keys are checked with the provider, then
-            encrypted in your Mac's keychain.
+            encrypted in your Mac's keychain. The OpenRouter key runs the models OpenRouter hosts, and the other keys
+            still talk to those providers directly.
           </p>
           <ProviderKey provider="anthropic" autoFocus />
           <ProviderKey provider="openai" autoFocus={false} />
           <ProviderKey provider="google" autoFocus={false} />
+          <ProviderKey provider="openrouter" autoFocus={false} />
 
           {configurable.length > 0 && (
             <>

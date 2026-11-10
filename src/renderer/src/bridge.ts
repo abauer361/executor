@@ -19,9 +19,10 @@ const browserPreview: ExecutorBridge = {
   revealPath: async () => {},
   pickDocs: async () => [],
   openExternal: async (url) => void window.open(url, '_blank'),
-  apiKeyStatus: async () => ({ anthropic: false, openai: false, google: false }),
+  apiKeyStatus: async () => ({ anthropic: false, openai: false, google: false, openrouter: false }),
   saveApiKey: async () => ({ ok: false, message: 'API keys need the desktop app.' }),
   removeApiKey: async () => {},
+  listOpenRouterModels: async () => [],
   startRun: async ({ runId }) => {
     const message = 'Runs need the desktop app.'
     for (const listener of previewListeners) listener({ type: 'end', runId, outcome: 'failed', message })

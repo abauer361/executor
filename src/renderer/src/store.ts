@@ -1,7 +1,7 @@
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type NodeChange } from '@xyflow/react'
 import { create } from 'zustand'
 import type { McpStoredSetup } from '../../shared/mcpServers'
-import type { Provider } from '../../shared/pricing'
+import { registerListedRates, type Provider } from '../../shared/pricing'
 import type { ClawHubPreview, InstalledClawHubSkill } from '../../shared/clawhub'
 import type { InstalledRegistryServer, RegistryEntry } from '../../shared/registry'
 import type {
@@ -11,6 +11,7 @@ import type {
   CatalogPackage,
   DownloadRecord,
   KeyResult,
+  OpenRouterModel,
   Project,
   RunEvent,
   Workflow,
@@ -43,6 +44,7 @@ interface Persisted {
 interface AppState extends Persisted {
   hydrated: boolean
   apiKeys: Record<Provider, boolean>
+  openRouterModels: OpenRouterModel[]
   mcpSetups: Record<string, McpStoredSetup>
   mcpChecking: string[]
   registryServers: Record<string, InstalledRegistryServer>
@@ -100,6 +102,25 @@ interface AppState extends Persisted {
 }
 
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 8)}`
+
+async function fetchOpenRouterModels() {
+  const models = await bridge.listOpenRouterModels().catch(() => [])
+  for (const model of models) {
+    registerListedRates(model.id, { input: model.promptPerMillion, output: model.completionPerMillion })
+  }
+  return models
+}
+
+const idSets = new WeakMap<OpenRouterModel[], ReadonlySet<string>>()
+
+export function openRouterIds({ openRouterModels }: Pick<AppState, 'openRouterModels'>) {
+  let ids = idSets.get(openRouterModels)
+  if (!ids) {
+    ids = new Set(openRouterModels.map((model) => model.id))
+    idSets.set(openRouterModels, ids)
+  }
+  return ids
+}
 
 export const activeProject = (state: Persisted) =>
   state.projects.find((project) => project.id === state.activeProjectId) ?? state.projects[0]
@@ -236,7 +257,8 @@ function layeredPositions(workflow: Workflow) {
 
 export const useApp = create<AppState>((set, get) => ({
   hydrated: false,
-  apiKeys: { anthropic: false, openai: false, google: false },
+  apiKeys: { anthropic: false, openai: false, google: false, openrouter: false },
+  openRouterModels: [],
   mcpSetups: {},
   mcpChecking: [],
   registryServers: {},
@@ -261,6 +283,7 @@ export const useApp = create<AppState>((set, get) => ({
   async hydrate() {
     set({
       apiKeys: await bridge.apiKeyStatus().catch(() => get().apiKeys),
+      openRouterModels: await fetchOpenRouterModels(),
       mcpSetups: await bridge.getMcpSetups().catch(() => ({})),
       registryServers: await bridge.getRegistryServers().catch(() => ({})),
       clawhubSkills: await bridge.getClawHubSkills().catch(() => ({}))
@@ -308,12 +331,16 @@ export const useApp = create<AppState>((set, get) => ({
   async saveApiKey(provider, key) {
     const result = await bridge.saveApiKey(provider, key)
     if (result.ok) set((state) => ({ apiKeys: { ...state.apiKeys, [provider]: true } }))
+    if (result.ok && provider === 'openrouter') set({ openRouterModels: await fetchOpenRouterModels() })
     return result
   },
 
   async removeApiKey(provider) {
     await bridge.removeApiKey(provider)
-    set((state) => ({ apiKeys: { ...state.apiKeys, [provider]: false } }))
+    set((state) => ({
+      apiKeys: { ...state.apiKeys, [provider]: false },
+      openRouterModels: provider === 'openrouter' ? [] : state.openRouterModels
+    }))
   },
 
   async installRegistryServer(entry) {
@@ -440,7 +467,7 @@ export const useApp = create<AppState>((set, get) => ({
   beginRun(goal) {
     const state = get()
     const runId = crypto.randomUUID()
-    const request = buildRunRequest(activeWorkflow(state), state.agents, goal, runId)
+    const request = buildRunRequest(activeWorkflow(state), state.agents, goal, runId, openRouterIds(state))
     set({ runPanelOpen: false, ...withActiveWorkflow(state, (workflow) => prepareRun(workflow, goal, runId)) })
     bridge.startRun(request).catch((error: Error) => {
       get().applyRunEvent({ type: 'end', runId, outcome: 'failed', message: error.message })

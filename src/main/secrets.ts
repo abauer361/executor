@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Provider } from '../shared/pricing'
+import { PROVIDER_LABEL, type Provider } from '../shared/pricing'
 
 const secretPath = (name: string) => join(app.getPath('userData'), `${name}.enc`)
 
@@ -23,7 +23,7 @@ export async function loadSecret(name: string) {
 
 export const removeSecret = (name: string) => rm(secretPath(name), { force: true })
 
-const PROVIDERS: Provider[] = ['anthropic', 'openai', 'google']
+const PROVIDERS = Object.keys(PROVIDER_LABEL) as Provider[]
 const providerSecret = (provider: Provider) => `${provider}-key`
 
 export const saveApiKey = (provider: Provider, key: string) => saveSecret(providerSecret(provider), key)

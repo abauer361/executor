@@ -27,6 +27,16 @@ export const MODEL_CATALOG: ModelOption[] = [
 
 const MODEL_BY_ID = new Map(MODEL_CATALOG.map((model) => [model.id, model]))
 
-export const modelName = (id: string) => MODEL_BY_ID.get(id)?.name ?? id
+export const NO_IDS: ReadonlySet<string> = new Set()
+
+export const modelName = (id: string, listed: readonly { id: string; name: string }[] = []) =>
+  MODEL_BY_ID.get(id)?.name ?? listed.find((model) => model.id === id)?.name ?? id
 
 export const providerOfModel = (id: string): Provider | null => MODEL_BY_ID.get(id)?.provider ?? null
+
+// Catalog ids never fall through to OpenRouter, even when their own key is missing.
+export function routeProvider(modelId: string, openRouterIds: ReadonlySet<string>): Provider | null {
+  const model = MODEL_BY_ID.get(modelId)
+  if (model) return model.provider
+  return openRouterIds.has(modelId) ? 'openrouter' : null
+}

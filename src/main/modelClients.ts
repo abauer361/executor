@@ -22,6 +22,7 @@ export function createModelClient(keys: ProviderKeys): ModelClient {
     },
     startSession(config) {
       const provider = providerOf(config.model)
+      if (!provider) throw new FatalRunError(`${config.model} is not a connected model.`)
       const client = clients[provider]
       if (!client) throw missingKey(provider)
       return client.startSession(config)
@@ -29,8 +30,12 @@ export function createModelClient(keys: ProviderKeys): ModelClient {
   }
 }
 
+const VERIFY_KEY: Record<Provider, (key: string) => Promise<KeyResult>> = {
+  anthropic: verifyAnthropicKey,
+  openai: verifyOpenAIKey,
+  google: verifyGeminiKey
+}
+
 export function verifyApiKey(provider: Provider, key: string): Promise<KeyResult> {
-  if (provider === 'openai') return verifyOpenAIKey(key)
-  if (provider === 'google') return verifyGeminiKey(key)
-  return verifyAnthropicKey(key)
+  return VERIFY_KEY[provider](key)
 }

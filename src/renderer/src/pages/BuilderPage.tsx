@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PROVIDER_LABEL, providerOf, RUNNABLE_MODELS } from '../../../shared/pricing'
+import { PROVIDER_LABEL } from '../../../shared/pricing'
 import type { Agent, MemoryDoc, PackageKind } from '../../../shared/types'
 import { bridge } from '../bridge'
 import { Icon, RobotFace } from '../components/ui'
@@ -117,7 +117,7 @@ function ModelPool({ draft }: { draft: Agent }) {
               </span>
               <span className="strong truncate">{model.name}</span>
               <span className="mono faint">
-                {RUNNABLE_MODELS.includes(model.id) ? `${PROVIDER_LABEL[providerOf(model.id)]} · ${model.focus}` : 'Not connected yet'}
+                {model.runnable && model.provider ? `${PROVIDER_LABEL[model.provider]} · ${model.focus}` : 'Not connected yet'}
               </span>
             </label>
           )

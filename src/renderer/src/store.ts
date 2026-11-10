@@ -20,7 +20,6 @@ import type {
 import { bridge } from './bridge'
 import { clawhubPackage, packageById, PREINSTALLED, registryPackage } from './data/catalog'
 import { RETIRED_MODELS } from './data/models'
-import { createSeed } from './data/seed'
 import { buildRunRequest, prepareRun, reduceRunEvent, serverState } from './runState'
 import { appendLog, logEntry, sampleCost } from './usage'
 
@@ -91,7 +90,7 @@ interface AppState extends Persisted {
 
   openBuilder(agentId: string, section?: BuilderSection): void
   updateDraft(patch: Partial<Agent>): void
-  saveDraft(): void
+  saveDraft(): Promise<void>
   createAgent(): void
   deleteAgent(agentId: string): void
 
@@ -128,6 +127,17 @@ function emptyWorkflow(name: string): Workflow {
   return { id: uid('wf'), name, nodes: [], edges: [], running: false, lastRunAt: null, log: [] }
 }
 
+function freshProject(name: string): Project {
+  const workflow = emptyWorkflow('main')
+  return {
+    id: uid('project'),
+    name,
+    tag: 'New project',
+    activeWorkflowId: workflow.id,
+    workflows: [workflow]
+  }
+}
+
 function createNode(agent: Agent, position: { x: number; y: number }): WorkflowNode {
   return {
     id: uid('node'),
@@ -153,7 +163,7 @@ function restoreWorkflow(workflow: Workflow): Workflow {
     running: false,
     sample: workflow.sample ?? (workflow.runId === undefined && workflow.nodes.some((node) => node.data.tokensUsed > 0)),
     nodes: workflow.nodes.map((node) => {
-      const interrupted = workflow.running && ['active', 'queued'].includes(node.data.status)
+      const interrupted = ['active', 'queued'].includes(node.data.status)
       return {
         ...node,
         data: {
@@ -256,7 +266,7 @@ export const useApp = create<AppState>((set, get) => ({
       clawhubSkills: await bridge.getClawHubSkills().catch(() => ({}))
     })
     const saved = await bridge.loadState()
-    if (saved) {
+    if (saved !== null) {
       try {
         const state = JSON.parse(saved) as Persisted
         set({
@@ -270,7 +280,8 @@ export const useApp = create<AppState>((set, get) => ({
         })
         return
       } catch (error) {
-        console.error('Saved state is unreadable, starting from sample data', error)
+        console.error('Saved state is unreadable and was left in place', error)
+        return
       }
     }
 
@@ -279,7 +290,8 @@ export const useApp = create<AppState>((set, get) => ({
       const pkg = packageById(id)
       if (pkg) downloads[id] = { packageId: id, path: await bridge.downloadPackage(pkg), downloadedAt: Date.now() }
     }
-    set({ ...createSeed(), downloads, hydrated: true })
+    const project = freshProject('Untitled')
+    set({ projects: [project], agents: [], downloads, activeProjectId: project.id, hydrated: true })
   },
 
   setPage(page) {
@@ -359,14 +371,7 @@ export const useApp = create<AppState>((set, get) => ({
   selectProject: (id) => set({ activeProjectId: id, switcherOpen: false }),
 
   addProject(name) {
-    const workflow = emptyWorkflow('main')
-    const project: Project = {
-      id: uid('project'),
-      name,
-      tag: 'New project',
-      activeWorkflowId: workflow.id,
-      workflows: [workflow]
-    }
+    const project = freshProject(name)
     set((state) => ({ projects: [...state.projects, project], activeProjectId: project.id, switcherOpen: false }))
   },
 
@@ -516,12 +521,19 @@ export const useApp = create<AppState>((set, get) => ({
   updateDraft: (patch) =>
     set((state) => (state.builderDraft ? { builderDraft: { ...state.builderDraft, ...patch } } : state)),
 
-  saveDraft() {
+  async saveDraft() {
     const { builderDraft } = get()
     if (!builderDraft) return
-    set((state) => ({
-      agents: state.agents.map((agent) => (agent.id === builderDraft.id ? structuredClone(builderDraft) : agent))
-    }))
+    const agents = get().agents.map((agent) => (agent.id === builderDraft.id ? structuredClone(builderDraft) : agent))
+    clearTimeout(saveTimer)
+    try {
+      await persist({ agents })
+    } catch (error) {
+      console.error('Could not save agent', error)
+      schedulePersist()
+      return
+    }
+    set({ agents })
   },
 
   createAgent() {
@@ -645,16 +657,41 @@ export const useApp = create<AppState>((set, get) => ({
   }
 }))
 
+const PERSISTED_KEYS = ['projects', 'agents', 'downloads', 'activeProjectId', 'theme'] as const satisfies readonly (keyof Persisted)[]
+
+function persistedSlice(state: Persisted, override: Partial<Persisted> = {}): Persisted {
+  return {
+    projects: override.projects ?? state.projects,
+    agents: override.agents ?? state.agents,
+    downloads: override.downloads ?? state.downloads,
+    activeProjectId: override.activeProjectId ?? state.activeProjectId,
+    theme: override.theme ?? state.theme
+  }
+}
+
+let saveTail: Promise<void> = Promise.resolve()
+
+function persist(override?: Partial<Persisted>) {
+  const json = JSON.stringify(persistedSlice(useApp.getState(), override))
+  const write = saveTail.then(() => bridge.saveState(json))
+  saveTail = write.then(
+    () => undefined,
+    () => undefined
+  )
+  return write
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+function schedulePersist() {
+  clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    void persist().catch((error) => console.error('Could not save workspace', error))
+  }, 400)
+}
 
 useApp.subscribe((state, previous) => {
   if (!state.hydrated) return
-  const keys: (keyof Persisted)[] = ['projects', 'agents', 'downloads', 'activeProjectId', 'theme']
-  if (keys.every((key) => state[key] === previous[key])) return
-
-  clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const { projects, agents, downloads, activeProjectId, theme } = useApp.getState()
-    void bridge.saveState(JSON.stringify({ projects, agents, downloads, activeProjectId, theme }))
-  }, 400)
+  if (PERSISTED_KEYS.every((key) => state[key] === previous[key])) return
+  schedulePersist()
 })

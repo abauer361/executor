@@ -24,7 +24,7 @@ export type McpLaunch =
   | { transport: 'http'; url: string; headers: Record<string, string> }
 
 // The only commands the app will run. The interface passes a server id, never a command.
-export const MCP_SERVERS: Record<string, McpServerSpec> = {
+const MCP_SERVER_DEFS = {
   filesystem: {
     id: 'filesystem',
     command: 'npx',
@@ -59,7 +59,15 @@ export const MCP_SERVERS: Record<string, McpServerSpec> = {
   },
   time: { id: 'time', command: 'uvx', args: ['mcp-server-time'], settings: [] },
   playwright: { id: 'playwright', command: 'npx', args: ['-y', '@playwright/mcp@latest'], settings: [] }
-}
+} satisfies Record<string, McpServerSpec>
+
+export type BuiltInMcpId = keyof typeof MCP_SERVER_DEFS
+
+export const MCP_SERVERS: Record<string, McpServerSpec> = MCP_SERVER_DEFS
+
+export const BUILTIN_MCP_IDS = Object.keys(MCP_SERVER_DEFS) as BuiltInMcpId[]
+
+export const builtInServer = (id: BuiltInMcpId): McpServerSpec => MCP_SERVER_DEFS[id]
 
 export interface McpStoredSetup {
   folders: Record<string, string[]>

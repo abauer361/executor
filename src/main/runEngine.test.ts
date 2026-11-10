@@ -150,6 +150,19 @@ const lastNode = (events: RunEvent[], id: string) =>
 const endOf = (events: RunEvent[]) => events.find((event) => event.type === 'end')
 
 describe('run order', () => {
+  it('passes every turn downstream, including text from before a tool call', async () => {
+    const { tool } = fakeTool('read', false)
+    const { client, calls } = fakeClient({
+      reply: (call) =>
+        call.turn === 0
+          ? { text: 'Plan the change', toolUses: [toolUse('t1', 'read')], stopReason: 'tool_use' }
+          : { text: 'Done, tests pass' }
+    })
+    await run([node('a'), node('b')], [['a', 'b']], client, environment([tool]).value)
+    const downstream = calls.find((call) => call.id === 'B')
+    expect(downstream?.userMessage).toContain('Plan the change\n\nDone, tests pass')
+  })
+
   it('runs agents in connection order and passes output downstream', async () => {
     const { client, calls } = fakeClient()
     const events = await run([node('a'), node('b')], [['a', 'b']], client)
@@ -185,6 +198,25 @@ describe('limits', () => {
     const { client, calls } = fakeClient({ inputTokens: 0 })
     await run([node('a', { mode: 'dollars', tokens: 0, dollars: 0.01 })], [], client)
     expect(calls[0].maxTokens).toBe(1000)
+  })
+
+  it('does not run tools or pass a reply on after recorded usage passes the limit', async () => {
+    const { tool, calls: toolCalls } = fakeTool('read', false)
+    const { client, calls } = fakeClient({
+      inputTokens: 100,
+      reply: () => ({
+        text: 'Spent the budget',
+        toolUses: [toolUse('t1', 'read')],
+        stopReason: 'tool_use',
+        usage: [{ model: 'claude-sonnet-5-5', inputTokens: 100, outputTokens: 5_000 }]
+      })
+    })
+    const events = await run([node('a', tokens(1_000)), node('b')], [['a', 'b']], client, environment([tool]).value)
+    expect(calls.map((call) => call.id)).toEqual(['A'])
+    expect(toolCalls).toHaveLength(0)
+    expect(lastNode(events, 'a')).toMatchObject({ status: 'stopped', task: 'Token budget exceeded' })
+    expect(lastNode(events, 'b')).toMatchObject({ task: 'Skipped' })
+    expect(calls.some((call) => call.userMessage.includes('Spent the budget'))).toBe(false)
   })
 
   it('spends nothing when the input alone leaves no room to reply', async () => {
@@ -611,6 +643,8 @@ describe('pricing', () => {
     expect(providerOf('gpt-6.1-sol')).toBe('openai')
     expect(providerOf('gemini-4-argon')).toBe('google')
     expect(providerOf('claude-opus-5-5')).toBe('anthropic')
+    expect(providerOf('deepseek-r1')).toBeNull()
+    expect(providerOf('gpt-not-a-model')).toBeNull()
   })
 
   it('reports the most an agent could spend', () => {

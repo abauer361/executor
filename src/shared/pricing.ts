@@ -1,3 +1,4 @@
+import { MODEL_CATALOG, providerOfModel } from './models'
 import type { Limiter } from './types'
 
 interface Rates {
@@ -62,24 +63,11 @@ const OPENAI_LONG_PROMPT_TOKENS = 272_000
 const OPENAI_LONG_INPUT_MULTIPLIER = 2
 const OPENAI_LONG_OUTPUT_MULTIPLIER = 1.5
 
-export const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
+export const CLAUDE_MODELS = MODEL_CATALOG.filter((model) => model.routable).map((model) => model.id)
 
-export const RUNNABLE_MODELS = [
-  ...CLAUDE_MODELS,
-  'gpt-6-astra',
-  'gpt-6.1-sol',
-  'gpt-6.1-terra',
-  'gpt-6-luna',
-  'gemini-4-argon',
-  'gemini-3.8-flash',
-  'gemini-3.5-flash-lite'
-]
+export const RUNNABLE_MODELS = MODEL_CATALOG.filter((model) => model.runnable).map((model) => model.id)
 
-export function providerOf(model: string): Provider {
-  if (model.startsWith('gpt-')) return 'openai'
-  if (model.startsWith('gemini-')) return 'google'
-  return 'anthropic'
-}
+export const providerOf = providerOfModel
 
 function ratesFor(model: string, inputTokens: number, today: string): Rates {
   if (model === 'claude-haiku-5-5' && inputTokens > HAIKU_LONG_PROMPT_TOKENS) return HAIKU_LONG_PROMPT_RATES

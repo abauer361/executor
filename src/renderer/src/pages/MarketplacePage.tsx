@@ -5,7 +5,6 @@ import { Icon } from '../components/ui'
 import { CATALOG, installedPackages, KIND_LABEL } from '../data/catalog'
 import { serverState } from '../runState'
 import { useApp } from '../store'
-import { countOf } from '../usage'
 import { ClawHubBrowser } from './ClawHubBrowser'
 import { RegistryBrowser } from './RegistryBrowser'
 
@@ -41,15 +40,12 @@ const USE_HINT: Record<PackageKind, string> = {
 
 function Facts({ pkg }: { pkg: CatalogPackage }) {
   const facts: [string, string][] = []
-  if (pkg.kind === 'mcp') {
-    facts.push(['Transport', pkg.transport ?? 'stdio'], ['Install', pkg.install ?? ''])
-  } else if (pkg.kind === 'skill') {
-    facts.push(['License', pkg.license ?? 'Not stated'], ['Author', pkg.author])
-  } else if (pkg.agent) {
+  if (pkg.agent) {
     facts.push(['Models', String(pkg.agent.models.length)], ['MCP Servers', String(pkg.agent.mcpServers.length)])
   } else if (pkg.workflow) {
     facts.push(['Agents', String(pkg.workflow.agents.length)], ['Connections', String(pkg.workflow.edges.length)])
   }
+  if (facts.length === 0) return null
 
   return (
     <dl className="facts">
@@ -82,7 +78,7 @@ function ServerStatus({ pkg }: { pkg: CatalogPackage }) {
       </p>
     )
   }
-  if (check?.ok) return <p className="mono faint package-hint">Ready: {countOf(check.tools ?? 0, 'tool')}. Add it in Agent Builder.</p>
+  if (check?.ok) return null
   return (
     <p className={`mono package-hint ${check ? 'package-error' : 'faint'}`}>
       {check ? check.message : 'Not tested yet.'}{' '}

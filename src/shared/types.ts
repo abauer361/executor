@@ -1,3 +1,4 @@
+import type { AccountResult, AccountState, SignInProvider } from './account'
 import type { ClawHubEntry, ClawHubPreview, InstalledClawHubSkill } from './clawhub'
 import type { McpStoredSetup } from './mcpServers'
 import type { Provider } from './pricing'
@@ -234,5 +235,8 @@ export interface ExecutorBridge {
   installClawHubSkill(owner: string, slug: string, version: string, sha256: string): Promise<InstalledClawHubSkill>
   removeClawHubSkill(id: string): Promise<void>
   getClawHubSkills(): Promise<Record<string, InstalledClawHubSkill>>
+  getAccount(): Promise<AccountState>
+  signIn(provider: SignInProvider): Promise<AccountResult>
+  signOut(): Promise<void>
   onRunEvent(listener: (event: RunEvent) => void): () => void
 }

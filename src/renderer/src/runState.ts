@@ -1,6 +1,7 @@
 import { PROVIDER_LABEL, providerOf, spendCeiling, type Provider } from '../../shared/pricing'
 import { MCP_SERVERS, missingSettings, type McpServerSpec, type McpStoredSetup } from '../../shared/mcpServers'
 import type { InstalledRegistryServer } from '../../shared/registry'
+import type { RunRecord } from '../../shared/account'
 import { hasCycle } from '../../shared/runGraph'
 import type {
   Agent,
@@ -188,6 +189,28 @@ function finishRun(workflow: Workflow, outcome: RunOutcome, message?: string): W
     outcome,
     approvals: [],
     log: appendLog(workflow.log, [logEntry(null, workflow.name, summary)])
+  }
+}
+
+// The numbers a finished run leaves behind, or nothing if it never reached a model.
+export function runRecord(workflow: Workflow, agents: Agent[], endedAt = Date.now()): RunRecord | null {
+  if (!workflow.runId || !workflow.outcome) return null
+  const models = workflow.nodes.flatMap((node) => {
+    if (node.data.tokensUsed <= 0) return []
+    const agent = agentFor(node, agents)
+    const model = node.data.routedModel ?? (agent && runnableModel(agent, node.data.activeModel)) ?? node.data.activeModel
+    return [{ model, tokens: node.data.tokensUsed, cost: node.data.costUsed }]
+  })
+  if (models.length === 0) return null
+  return {
+    runId: workflow.runId,
+    workflowId: workflow.id,
+    workflowName: workflow.name,
+    endedAt,
+    outcome: workflow.outcome,
+    tokens: totalTokens(workflow),
+    cost: totalCost(workflow),
+    models
   }
 }
 

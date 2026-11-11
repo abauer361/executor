@@ -64,6 +64,8 @@ describe('IPC validation', () => {
 
   it('refuses decisions and types it does not know', () => {
     refuses('run:approve', 'r', 'a', 'yes')
+    refuses('account:sign-in', 'facebook')
+    expect(check('account:sign-in', 'github')).toEqual(['github'])
     refuses('run:stop', 42)
     refuses('run:stop', '')
     refuses('state:save', { not: 'text' })
@@ -99,6 +101,6 @@ describe('IPC validation', () => {
   })
 
   it('has a validator for every channel', () => {
-    expect(Object.keys(validators)).toHaveLength(28)
+    expect(Object.keys(validators)).toHaveLength(31)
   })
 })

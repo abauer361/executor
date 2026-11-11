@@ -1,3 +1,4 @@
+import type { Account } from '../../shared/account'
 import type { ExecutorBridge, RunEvent } from '../../shared/types'
 
 declare global {
@@ -8,6 +9,10 @@ declare global {
 
 const STATE_KEY = 'executor-state'
 const previewListeners = new Set<(event: RunEvent) => void>()
+
+// A made-up person, so the signed-in profile can be looked at in the browser preview.
+const PREVIEW_ACCOUNT: Account = { id: 'preview', name: 'Sample Person', email: 'sample@example.com', provider: 'github' }
+let previewAccount: Account | null = null
 
 // Lets `npm run dev:web` run the renderer alone for UI checks. The app itself always uses the preload bridge.
 const browserPreview: ExecutorBridge = {
@@ -49,6 +54,18 @@ const browserPreview: ExecutorBridge = {
   },
   removeClawHubSkill: async () => {},
   getClawHubSkills: async () => ({}),
+  getAccount: async () => ({
+    connected: true,
+    account: previewAccount,
+    plan: previewAccount && { name: 'Preview', status: 'active' }
+  }),
+  signIn: async (provider) => {
+    previewAccount = { ...PREVIEW_ACCOUNT, provider }
+    return { ok: true }
+  },
+  signOut: async () => {
+    previewAccount = null
+  },
   onRunEvent: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

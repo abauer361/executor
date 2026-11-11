@@ -1,3 +1,4 @@
+import type { Preferences, RunRecord } from './account'
 import type { Agent, DownloadRecord, Project } from './types'
 
 export type Theme = 'dark' | 'light'
@@ -12,6 +13,9 @@ export interface Persisted {
   downloads: Record<string, DownloadRecord>
   activeProjectId: string
   theme: Theme
+  // Added later, so files saved before them simply do not have them.
+  runs?: RunRecord[]
+  preferences?: Preferences
 }
 
 type Raw = Record<string, unknown>

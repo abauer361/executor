@@ -14,8 +14,9 @@ Electron + TypeScript + React desktop app for building and running multi-agent w
 | `src/main/registry.ts`, `clawhub.ts` | Installing servers and skills from untrusted registries |
 | `src/main/listCache.ts` | Remembers each registry's opening list on disk so its Marketplace tab fills in at once |
 | `src/main/secrets.ts` | API keys, encrypted with `safeStorage` |
+| `src/main/account.ts` | Who is signed in. A stand-in until the account service is connected; the only file that changes then |
 | `src/preload/index.ts` | The only bridge to the renderer (`window.executor`) |
-| `src/shared/` | Types and pure logic used by both sides: `types.ts`, `ipc.ts` (the IPC contract), `persisted.ts` (saved-state shape), `pricing.ts`, `mcpServers.ts`, `registry.ts`, `skills.ts` |
+| `src/shared/` | Types and pure logic used by both sides: `types.ts`, `ipc.ts` (the IPC contract), `persisted.ts` (saved-state shape), `account.ts` (account, preferences, numbers-only run records, usage summary), `pricing.ts`, `mcpServers.ts`, `registry.ts`, `skills.ts` |
 | `src/renderer/src/store.ts` | The zustand store: all app state and actions |
 | `src/renderer/src/runState.ts` | Pure reducer that applies run events to a workflow |
 | `src/renderer/src/saveScheduler.ts`, `batcher.ts` | When state is saved; batching of streamed run events |

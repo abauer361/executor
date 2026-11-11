@@ -4,6 +4,7 @@ import { createBatcher } from './batcher'
 import { bridge } from './bridge'
 import { Header, Rail } from './components/Shell'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
+import { ProfileDialog } from './components/ProfileDialog'
 import { SettingsDialog } from './components/SettingsDialog'
 import { BuilderPage } from './pages/BuilderPage'
 import { CanvasPage } from './pages/canvas/CanvasPage'
@@ -86,6 +87,7 @@ export function App() {
       </main>
       <ProjectSwitcher />
       <SettingsDialog />
+      <ProfileDialog />
     </div>
   )
 }

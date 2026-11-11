@@ -1,5 +1,6 @@
 import { activeProject, activeWorkflow, useApp, type Page } from '../store'
 import { workflowStatus } from '../usage'
+import { Avatar } from './ProfileDialog'
 import { Icon, Kbd, StatusDot } from './ui'
 
 const NAV: { page: Page; label: string; icon: string; crumb: string }[] = [
@@ -58,6 +59,7 @@ export function Header() {
   const page = useApp((state) => state.page)
   const project = useApp(activeProject)
   const theme = useApp((state) => state.theme)
+  const account = useApp((state) => state.accountState.account)
   const { setTheme, setUi } = useApp.getState()
   const crumb = NAV.find((item) => item.page === page)?.crumb
 
@@ -87,6 +89,14 @@ export function Header() {
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         >
           <Icon name={theme === 'dark' ? 'dark_mode' : 'light_mode'} size={18} />
+        </button>
+        <button
+          className={account ? 'avatar-button' : 'icon-button'}
+          type="button"
+          aria-label={account ? `Profile: ${account.name}` : 'Profile'}
+          onClick={() => setUi({ profileOpen: true })}
+        >
+          {account ? <Avatar account={account} size={26} /> : <Icon name="account_circle" size={18} />}
         </button>
       </div>
     </header>

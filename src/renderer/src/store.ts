@@ -1,5 +1,14 @@
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type NodeChange } from '@xyflow/react'
 import { create } from 'zustand'
+import {
+  DEFAULT_PREFERENCES,
+  RUN_HISTORY_LIMIT,
+  type AccountResult,
+  type AccountState,
+  type Preferences,
+  type RunRecord,
+  type SignInProvider
+} from '../../shared/account'
 import type { McpStoredSetup } from '../../shared/mcpServers'
 import { parsePersisted, STATE_VERSION, type Persisted, type Theme } from '../../shared/persisted'
 import type { Provider } from '../../shared/pricing'
@@ -22,7 +31,7 @@ import { bridge } from './bridge'
 import { clawhubPackage, packageById, PREINSTALLED, registryPackage } from './data/catalog'
 import { RETIRED_MODELS } from './data/models'
 import { createSeed } from './data/seed'
-import { buildRunRequest, prepareRun, reduceRunEvents, serverState } from './runState'
+import { buildRunRequest, prepareRun, reduceRunEvents, runRecord, serverState } from './runState'
 import { createSaveScheduler } from './saveScheduler'
 import { appendLog, logEntry, sampleCost } from './usage'
 
@@ -39,6 +48,10 @@ interface AppState extends Persisted {
   hydrated: boolean
   notice: string | null
   loadError: string | null
+  accountState: AccountState
+  runs: RunRecord[]
+  preferences: Preferences
+  profileOpen: boolean
   apiKeys: Record<Provider, boolean>
   mcpSetups: Record<string, McpStoredSetup>
   mcpChecking: string[]
@@ -59,8 +72,11 @@ interface AppState extends Persisted {
   hydrate(): Promise<void>
   dismissNotice(): void
   setPage(page: Page): void
-  setUi(patch: Partial<Pick<AppState, 'drawerTab' | 'drawerOpen' | 'inspectorOpen' | 'logsOpen' | 'switcherOpen' | 'settingsOpen' | 'runPanelOpen' | 'creatingWorkflow' | 'builderSection'>>): void
+  setUi(patch: Partial<Pick<AppState, 'drawerTab' | 'drawerOpen' | 'inspectorOpen' | 'logsOpen' | 'switcherOpen' | 'settingsOpen' | 'profileOpen' | 'runPanelOpen' | 'creatingWorkflow' | 'builderSection'>>): void
   setTheme(theme: Theme): void
+  signIn(provider: SignInProvider): Promise<AccountResult>
+  signOut(): Promise<void>
+  setPreferences(patch: Partial<Preferences>): void
   saveApiKey(provider: Provider, key: string): Promise<KeyResult>
   removeApiKey(provider: Provider): Promise<void>
   saveMcpFolders(id: string, key: string, folders: string[]): Promise<void>
@@ -225,6 +241,10 @@ export const useApp = create<AppState>((set, get) => ({
   hydrated: false,
   notice: null,
   loadError: null,
+  accountState: { connected: false, account: null, plan: null },
+  runs: [],
+  preferences: DEFAULT_PREFERENCES,
+  profileOpen: false,
   apiKeys: { anthropic: false, openai: false, google: false },
   mcpSetups: {},
   mcpChecking: [],
@@ -268,6 +288,19 @@ export const useApp = create<AppState>((set, get) => ({
 
   setUi: (patch) => set(patch),
   setTheme: (theme) => set({ theme }),
+
+  async signIn(provider) {
+    const result = await bridge.signIn(provider)
+    if (result.ok) set({ accountState: await bridge.getAccount() })
+    return result
+  },
+
+  async signOut() {
+    await bridge.signOut()
+    set({ accountState: await bridge.getAccount() })
+  },
+
+  setPreferences: (patch) => set((state) => ({ preferences: { ...state.preferences, ...patch } })),
 
   async saveApiKey(provider, key) {
     const result = await bridge.saveApiKey(provider, key)
@@ -435,7 +468,16 @@ export const useApp = create<AppState>((set, get) => ({
       const projects = reduceRunEvents(state.projects, events)
       const inspectorOpen = state.inspectorOpen || needsAttention
       if (projects === state.projects && inspectorOpen === state.inspectorOpen) return state
-      return { projects, inspectorOpen }
+
+      // Each run that just ended leaves one record of its numbers behind.
+      const ended = new Set(events.flatMap((event) => (event.type === 'end' ? [event.runId] : [])))
+      const known = new Set(state.runs.map((record) => record.runId))
+      const finished = projects
+        .flatMap((project) => project.workflows)
+        .filter((workflow) => workflow.runId && ended.has(workflow.runId) && !known.has(workflow.runId))
+        .flatMap((workflow) => runRecord(workflow, state.agents) ?? [])
+      const runs = finished.length ? [...state.runs, ...finished].slice(-RUN_HISTORY_LIMIT) : state.runs
+      return { projects, inspectorOpen, runs }
     }),
 
   answerApproval(approvalId, decision) {
@@ -507,12 +549,12 @@ export const useApp = create<AppState>((set, get) => ({
       name: 'Untitled Agent',
       description: '',
       face: get().agents.length % 5,
-      models: ['claude-sonnet-5-5'],
+      models: [get().preferences.defaultModel],
       prompt: '',
       mcpServers: [],
       skills: [],
       memory: [],
-      limiter: { mode: 'tokens', tokens: 100_000, dollars: 5 },
+      limiter: { ...get().preferences.defaultLimiter },
       source: 'mine'
     }
     set((state) => ({ agents: [...state.agents, agent] }))
@@ -629,7 +671,8 @@ async function loadWorkspace() {
     apiKeys: await bridge.apiKeyStatus().catch(() => useApp.getState().apiKeys),
     mcpSetups: await bridge.getMcpSetups().catch(() => ({})),
     registryServers: await bridge.getRegistryServers().catch(() => ({})),
-    clawhubSkills: await bridge.getClawHubSkills().catch(() => ({}))
+    clawhubSkills: await bridge.getClawHubSkills().catch(() => ({})),
+    accountState: await bridge.getAccount().catch(() => useApp.getState().accountState)
   })
   const saved = await bridge.loadState()
   const state = saved.json === null ? null : parsePersisted(saved.json)
@@ -643,6 +686,8 @@ async function loadWorkspace() {
       downloads: state.downloads,
       activeProjectId: state.activeProjectId,
       theme: state.theme === 'light' ? 'light' : 'dark',
+      runs: Array.isArray(state.runs) ? state.runs : [],
+      preferences: { ...DEFAULT_PREFERENCES, ...state.preferences },
       hydrated: true
     })
     return
@@ -671,13 +716,14 @@ async function loadWorkspace() {
 }
 
 const saves = createSaveScheduler(() => {
-  const { projects, agents, downloads, activeProjectId, theme } = useApp.getState()
-  void bridge.saveState(JSON.stringify({ version: STATE_VERSION, projects, agents, downloads, activeProjectId, theme }))
+  const { projects, agents, downloads, activeProjectId, theme, runs, preferences } = useApp.getState()
+  const saved: Persisted = { version: STATE_VERSION, projects, agents, downloads, activeProjectId, theme, runs, preferences }
+  void bridge.saveState(JSON.stringify(saved))
 })
 
 useApp.subscribe((state, previous) => {
   if (!state.hydrated) return
-  const keys: (keyof Persisted)[] = ['projects', 'agents', 'downloads', 'activeProjectId', 'theme']
+  const keys = ['projects', 'agents', 'downloads', 'activeProjectId', 'theme', 'runs', 'preferences'] as const
   if (keys.every((key) => state[key] === previous[key])) return
   saves.request()
 })

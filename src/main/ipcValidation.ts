@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import type { SignInProvider } from '../shared/account'
 import type { IpcArgs, IpcChannel } from '../shared/ipc'
 import { RUNNABLE_MODELS, type Provider } from '../shared/pricing'
 import type { ApprovalDecision, CatalogPackage, Limiter, MemoryDoc, PackageKind, RunNodeSpec, RunRequest } from '../shared/types'
@@ -12,6 +13,7 @@ const MAX_PROMPT = 500_000
 const MAX_ITEMS = 200
 
 const PROVIDERS: readonly Provider[] = ['anthropic', 'openai', 'google']
+const SIGN_IN_PROVIDERS: readonly SignInProvider[] = ['google', 'github']
 const DECISIONS: readonly ApprovalDecision[] = ['allow', 'always', 'deny']
 const KINDS: readonly PackageKind[] = ['mcp', 'skill', 'agent', 'workflow']
 const PACKAGE_ID = /^[a-z0-9-]{1,100}$/
@@ -184,5 +186,8 @@ export const validators: { [C in IpcChannel]: (args: unknown[]) => IpcArgs<C> } 
     id(sha256, 'checksum')
   ],
   'clawhub:remove': ([skill]) => [id(skill, 'skill')],
-  'clawhub:skills': none
+  'clawhub:skills': none,
+  'account:state': none,
+  'account:sign-in': ([name]) => [oneOf(name, SIGN_IN_PROVIDERS, 'sign-in provider')],
+  'account:sign-out': none
 }

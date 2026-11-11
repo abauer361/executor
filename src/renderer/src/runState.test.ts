@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Agent, AgentStatus, Workflow, WorkflowNode } from '../../shared/types'
-import { buildRunRequest, prepareRun, reduceRunEvent, reduceRunEvents, runProblems, runSpendCeiling, runWarnings, serverState } from './runState'
+import { buildRunRequest, prepareRun, reduceRunEvent, reduceRunEvents, runProblems, runRecord, runSpendCeiling, runWarnings, serverState } from './runState'
 import { agentSummary, budgetShare, formatDollars, formatTokens, runnableModel, sampleCost, workflowStatus } from './usage'
 
 const agent = (patch: Partial<Agent> = {}): Agent => ({
@@ -120,6 +120,41 @@ describe('starting a run', () => {
     const prepared = prepareRun({ ...workflow([node('a', 'stopped', 500)]), sample: true }, 'Goal', 'r')
     expect(prepared.nodes[0].data).toMatchObject({ status: 'queued', tokensUsed: 0, costUsed: 0 })
     expect(prepared).toMatchObject({ running: true, sample: false, runId: 'r', goal: 'Goal' })
+  })
+})
+
+describe('run records', () => {
+  const finished = (): Workflow => {
+    let state = prepareRun(workflow([node('a'), node('b')]), 'A private goal', 'r')
+    state = reduceRunEvent(state, { type: 'usage', runId: 'r', nodeId: 'a', tokens: 1200, cost: 0.5 })
+    state = reduceRunEvent(state, { type: 'model', runId: 'r', nodeId: 'a', model: 'claude-haiku-5-5' })
+    state = reduceRunEvent(state, { type: 'output', runId: 'r', nodeId: 'a', text: 'A private answer' })
+    return reduceRunEvent(state, { type: 'end', runId: 'r', outcome: 'halted' })
+  }
+
+  it('keeps the numbers of a finished run, by the model each agent really used', () => {
+    expect(runRecord(finished(), [agent()], 42)).toEqual({
+      runId: 'r',
+      workflowId: 'w',
+      workflowName: 'w',
+      endedAt: 42,
+      outcome: 'halted',
+      tokens: 1200,
+      cost: 0.5,
+      models: [{ model: 'claude-haiku-5-5', tokens: 1200, cost: 0.5 }]
+    })
+  })
+
+  it('never carries the goal, prompts or output', () => {
+    const text = JSON.stringify(runRecord(finished(), [agent()]))
+    expect(text).not.toContain('private')
+    expect(text).not.toContain('Do it')
+  })
+
+  it('records nothing for a run that never reached a model, or one still going', () => {
+    const untouched = reduceRunEvent(prepareRun(workflow([node('a')]), 'Goal', 'r'), { type: 'end', runId: 'r', outcome: 'failed' })
+    expect(runRecord(untouched, [agent()])).toBeNull()
+    expect(runRecord(prepareRun(workflow([node('a')]), 'Goal', 'r'), [agent()])).toBeNull()
   })
 })
 

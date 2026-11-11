@@ -13,8 +13,26 @@ function RunPanel() {
   const mcpSetups = useApp((state) => state.mcpSetups)
   const registry = useApp((state) => state.registryServers)
   const clawhub = useApp((state) => state.clawhubSkills)
+  const needsSignIn = useApp((state) => state.accountState.connected && state.accountState.account === null)
   const { beginRun, setUi } = useApp.getState()
   const [goal, setGoal] = useState(workflow.goal ?? '')
+
+  // Building is open to everyone. Running is tied to an account once accounts are switched on.
+  if (needsSignIn) {
+    return (
+      <div className="run-panel" role="dialog" aria-label="Sign in to run">
+        <span className="eyebrow">Sign in to run</span>
+        <p className="muted">Runs are tied to your account. You can keep building without one.</p>
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={() => setUi({ runPanelOpen: false, profileOpen: true })}
+        >
+          Sign In
+        </button>
+      </div>
+    )
+  }
 
   if (!Object.values(apiKeys).some(Boolean)) {
     return (

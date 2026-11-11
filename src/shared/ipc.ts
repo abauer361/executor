@@ -1,3 +1,4 @@
+import type { AccountResult, AccountState, SignInProvider } from './account'
 import type { ClawHubEntry, ClawHubPreview, InstalledClawHubSkill } from './clawhub'
 import type { McpStoredSetup } from './mcpServers'
 import type { Provider } from './pricing'
@@ -47,6 +48,9 @@ export interface IpcContract {
   }
   'clawhub:remove': { args: [id: string]; result: void }
   'clawhub:skills': { args: []; result: Record<string, InstalledClawHubSkill> }
+  'account:state': { args: []; result: AccountState }
+  'account:sign-in': { args: [provider: SignInProvider]; result: AccountResult }
+  'account:sign-out': { args: []; result: void }
 }
 
 export type IpcChannel = keyof IpcContract

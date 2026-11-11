@@ -3,6 +3,7 @@ import { rm, stat } from 'node:fs/promises'
 import { basename, join, resolve, sep } from 'node:path'
 import { RUN_EVENT_CHANNEL, type IpcArgs, type IpcChannel, type IpcResult } from '../shared/ipc'
 import type { CatalogPackage, RunEvent } from '../shared/types'
+import { accountState, signIn, signOut } from './account'
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
 import {
   installClawHubSkill,
@@ -131,6 +132,10 @@ const handlers: { [C in IpcChannel]: Handler<C> } = {
   'clawhub:preview': (_event, owner, slug) => previewClawHubSkill(owner, slug),
   'clawhub:install': (_event, owner, slug, version, sha256) => installClawHubSkill(owner, slug, version, sha256),
   'clawhub:remove': (_event, id) => removeClawHubSkill(id),
+
+  'account:state': () => accountState(),
+  'account:sign-in': (_event, provider) => signIn(provider),
+  'account:sign-out': () => signOut(),
 
   'mcp:setups': () => allServerSetups(),
   'mcp:check': (_event, id) => checkServer(id),

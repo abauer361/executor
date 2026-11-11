@@ -35,6 +35,67 @@ async function storeWith(bridge: Partial<ExecutorBridge>): Promise<Store> {
 
 const loads = (state: LoadedState) => ({ loadState: async () => state })
 
+describe('profile', () => {
+  beforeEach(() => void vi.unstubAllGlobals())
+
+  const running = () => {
+    const node = {
+      id: 'n',
+      type: 'agent' as const,
+      position: { x: 0, y: 0 },
+      data: { agentId: 'a', status: 'active' as const, task: 'Writing', tokensUsed: 0, costUsed: 0, activeModel: 'claude-sonnet-5-5' }
+    }
+    return workflow({ running: true, runId: 'r', nodes: [node] })
+  }
+
+  it('adds one record when a run ends, however many times the end is reported', async () => {
+    const { useApp } = await storeWith(loads({ json: savedState([workflow()]) }))
+    await useApp.getState().hydrate()
+    useApp.setState((state) => ({ projects: [{ ...state.projects[0], workflows: [running()] }] }))
+
+    const end = { type: 'end', runId: 'r', outcome: 'completed' } as const
+    useApp.getState().applyRunEvents([{ type: 'usage', runId: 'r', nodeId: 'n', tokens: 900, cost: 0.3 }, end])
+    useApp.getState().applyRunEvents([end])
+
+    expect(useApp.getState().runs).toHaveLength(1)
+    expect(useApp.getState().runs[0]).toMatchObject({ runId: 'r', tokens: 900, cost: 0.3, outcome: 'completed' })
+  })
+
+  it('starts new agents from the saved preferences', async () => {
+    const { useApp } = await storeWith(loads({ json: savedState([workflow()]) }))
+    await useApp.getState().hydrate()
+
+    useApp.getState().setPreferences({ defaultModel: 'gpt-6.1-sol', defaultLimiter: { mode: 'dollars', tokens: 50_000, dollars: 2 } })
+    useApp.getState().createAgent()
+
+    expect(useApp.getState().agents.at(-1)).toMatchObject({
+      models: ['gpt-6.1-sol'],
+      limiter: { mode: 'dollars', dollars: 2 }
+    })
+  })
+
+  it('shows who is signed in after a successful sign-in, and nobody after a refused one', async () => {
+    const person = { id: 'u', name: 'Ada Lovelace', email: 'ada@example.com', provider: 'github' as const }
+    let signedIn = false
+    const { useApp } = await storeWith({
+      ...loads({ json: savedState([workflow()]) }),
+      getAccount: async () => ({ connected: true, account: signedIn ? person : null, plan: null }),
+      signIn: async (provider) => {
+        if (provider === 'google') return { ok: false, message: 'Closed the window' }
+        signedIn = true
+        return { ok: true }
+      }
+    })
+    await useApp.getState().hydrate()
+
+    expect(await useApp.getState().signIn('google')).toEqual({ ok: false, message: 'Closed the window' })
+    expect(useApp.getState().accountState.account).toBeNull()
+
+    await useApp.getState().signIn('github')
+    expect(useApp.getState().accountState.account).toEqual(person)
+  })
+})
+
 describe('loading the workspace', () => {
   beforeEach(() => void vi.unstubAllGlobals())
 
@@ -95,6 +156,25 @@ describe('loading the workspace', () => {
     const { useApp } = await storeWith({ ...loads({ json: '{"projects":[]}' }), downloadPackage: async () => '/x' })
     await useApp.getState().hydrate()
     expect(useApp.getState().projects.length).toBeGreaterThan(0)
+  })
+
+  it('restores run records and preferences, and fills in what older files lack', async () => {
+    const saved = JSON.parse(savedState([workflow()]))
+    const record = { runId: 'r', workflowId: 'w', workflowName: 'main', endedAt: 1, outcome: 'completed', tokens: 10, cost: 0.1, models: [] }
+    const withExtras = { ...saved, runs: [record], preferences: { defaultModel: 'gpt-6-luna' } }
+
+    const older = await storeWith(loads({ json: JSON.stringify(saved) }))
+    await older.useApp.getState().hydrate()
+    expect(older.useApp.getState().runs).toEqual([])
+    expect(older.useApp.getState().preferences.defaultModel).toBe('claude-sonnet-5-5')
+
+    const newer = await storeWith(loads({ json: JSON.stringify(withExtras) }))
+    await newer.useApp.getState().hydrate()
+    expect(newer.useApp.getState().runs).toEqual([record])
+    expect(newer.useApp.getState().preferences).toMatchObject({
+      defaultModel: 'gpt-6-luna',
+      defaultLimiter: { mode: 'tokens', tokens: 100_000 }
+    })
   })
 
   it('reports a failed load and recovers on retry', async () => {

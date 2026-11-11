@@ -37,6 +37,9 @@ const bridge: ExecutorBridge = {
   installClawHubSkill: call('clawhub:install'),
   removeClawHubSkill: call('clawhub:remove'),
   getClawHubSkills: call('clawhub:skills'),
+  getAccount: call('account:state'),
+  signIn: call('account:sign-in'),
+  signOut: call('account:sign-out'),
   onRunEvent: (listener) => {
     const handler = (_event: unknown, runEvent: RunEvent) => listener(runEvent)
     ipcRenderer.on(RUN_EVENT_CHANNEL, handler)

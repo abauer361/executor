@@ -1859,6 +1859,96 @@ h3 {
   color: var(--destructive);
 }
 
+/* Profile */
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.avatar-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.profile-tabs {
+  gap: 20px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.profile-tabs .tab {
+  padding: 10px 0;
+}
+
+.profile-body {
+  min-height: 300px;
+}
+
+.profile-card {
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-quiet);
+}
+
+.profile-sign-in {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.profile-select {
+  max-width: 200px;
+}
+
+.profile-limit {
+  width: 110px;
+}
+
+.usage-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.usage-stats .profile-card {
+  gap: 4px;
+}
+
+.usage-figure {
+  color: var(--fg-strong);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.usage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) 96px 64px;
+  align-items: center;
+  gap: 12px;
+}
+
+.usage-detail,
+.usage-cost {
+  text-align: right;
+}
+
 /* Runs and settings */
 .run-control {
   position: relative;

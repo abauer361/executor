@@ -8,11 +8,15 @@ import { installClawHubSkill, installedClawHubSkills, previewClawHubSkill, remov
 import { createModelClient, verifyApiKey } from './modelClients'
 import { allServerSetups, removeServerSecrets, saveFolders, saveServerSecret } from './mcpSetup'
 import { installedServers, installServer, removeServer, searchRegistry } from './registry'
-import { launchRun, type RunHandle } from './runEngine'
+import { launchRun } from './runEngine'
+import { createRunRegistry } from './runRegistry'
 import { apiKeyStatus, loadApiKeys, removeApiKey, saveApiKey } from './secrets'
 
 const KINDS = new Set(['mcp', 'skill', 'agent', 'workflow'])
-const runs = new Map<string, RunHandle>()
+const runs = createRunRegistry()
+
+// How long quitting waits for runs to stop their MCP servers.
+const QUIT_WAIT_MS = 5000
 
 const statePath = () => join(app.getPath('userData'), 'state.json')
 const libraryRoot = () => join(app.getPath('userData'), 'library')
@@ -98,9 +102,10 @@ function registerIpc() {
     const emit = (runEvent: RunEvent) => {
       if (!sender.isDestroyed()) sender.send('run:event', runEvent)
     }
-    const handle = launchRun(request, createModelClient(await loadApiKeys()), createAgentEnvironment(), emit)
-    runs.set(request.runId, handle)
-    void handle.done.finally(() => runs.delete(request.runId))
+    if (runs.has(request.runId)) throw new Error('That run has already started.')
+    const client = createModelClient(await loadApiKeys())
+    if (sender.isDestroyed()) return
+    runs.add(sender.id, request.runId, launchRun(request, client, createAgentEnvironment(), emit))
   })
 
   ipcMain.handle('run:stop', (_event, runId: string) => runs.get(runId)?.stop())
@@ -168,6 +173,17 @@ function createWindow() {
   })
 
   window.once('ready-to-show', () => window.show())
+
+  // A run reports only to the page that started it. Once that page is closed, reloaded or crashed,
+  // nobody can see or stop the run, so it ends here instead of spending unseen.
+  const { webContents } = window
+  const owner = webContents.id
+  const stopRuns = () => runs.stopOwnedBy(owner)
+  webContents.once('destroyed', stopRuns)
+  webContents.on('render-process-gone', stopRuns)
+  webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) stopRuns()
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isWebUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
@@ -188,8 +204,14 @@ void app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => {
-  for (const run of runs.values()) run.stop()
+let quitting = false
+
+// Runs get a moment to close their MCP servers, so no child process outlives the app.
+app.on('before-quit', (event) => {
+  if (quitting || runs.size === 0) return
+  event.preventDefault()
+  quitting = true
+  void runs.stopAll(QUIT_WAIT_MS).finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {

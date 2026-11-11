@@ -4,11 +4,18 @@ import { basename, join, resolve, sep } from 'node:path'
 import { RUN_EVENT_CHANNEL, type IpcArgs, type IpcChannel, type IpcResult } from '../shared/ipc'
 import type { CatalogPackage, RunEvent } from '../shared/types'
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
-import { installClawHubSkill, installedClawHubSkills, previewClawHubSkill, removeClawHubSkill, searchClawHub } from './clawhub'
+import {
+  installClawHubSkill,
+  installedClawHubSkills,
+  previewClawHubSkill,
+  removeClawHubSkill,
+  searchClawHub,
+  warmClawHub
+} from './clawhub'
 import { validators } from './ipcValidation'
 import { createModelClient, verifyApiKey } from './modelClients'
 import { allServerSetups, removeServerSecrets, saveFolders, saveServerSecret } from './mcpSetup'
-import { installedServers, installServer, removeServer, searchRegistry } from './registry'
+import { installedServers, installServer, removeServer, searchRegistry, warmRegistry } from './registry'
 import { launchRun } from './runEngine'
 import { createRunRegistry } from './runRegistry'
 import { apiKeyStatus, loadApiKeys, removeApiKey, saveApiKey } from './secrets'
@@ -110,7 +117,7 @@ const handlers: { [C in IpcChannel]: Handler<C> } = {
   'run:inject': (_event, runId, nodeId, text) => runs.get(runId)?.inject(nodeId, text),
   'run:approve': (_event, runId, approvalId, decision) => runs.get(runId)?.resolveApproval(approvalId, decision),
 
-  'registry:search': (_event, query, cursor) => searchRegistry(query, cursor),
+  'registry:search': (_event, query, cursor, fresh) => searchRegistry(query, cursor, fresh),
   'registry:servers': () => installedServers(),
   'registry:install': (_event, name, version) => installServer(name, version),
   'registry:remove': async (_event, id) => {
@@ -119,7 +126,7 @@ const handlers: { [C in IpcChannel]: Handler<C> } = {
     await removeServer(id)
   },
 
-  'clawhub:search': (_event, query, cursor) => searchClawHub(query, cursor),
+  'clawhub:search': (_event, query, cursor, fresh) => searchClawHub(query, cursor, fresh),
   'clawhub:skills': () => installedClawHubSkills(),
   'clawhub:preview': (_event, owner, slug) => previewClawHubSkill(owner, slug),
   'clawhub:install': (_event, owner, slug, version, sha256) => installClawHubSkill(owner, slug, version, sha256),
@@ -193,6 +200,9 @@ function createWindow() {
 void app.whenReady().then(() => {
   registerIpc()
   createWindow()
+  // Fetched in the background so the Marketplace tabs are ready before they are opened.
+  void warmRegistry()
+  void warmClawHub()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

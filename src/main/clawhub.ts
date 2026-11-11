@@ -14,10 +14,13 @@ import {
   type InstalledClawHubSkill
 } from '../shared/clawhub'
 import { checkSkillFile } from '../shared/skills'
+import type { BrowsePage } from '../shared/types'
+import { createListCache } from './listCache'
 
 const CLAWHUB_URL = process.env.EXECUTOR_CLAWHUB_URL ?? CLAWHUB_SITE
 const PAGE_SIZE = 30
 const REQUEST_TIMEOUT_MS = 15_000
+const FIRST_PAGE_MAX_AGE_MS = 5 * 60_000
 const SKILL_FILE = 'SKILL.md'
 const MAX_SKILL_BYTES = 1_000_000
 
@@ -41,18 +44,42 @@ async function request(path: string, params: Record<string, string>) {
 const fetchJson = async (path: string, params: Record<string, string> = {}) =>
   (await (await request(path, params)).json()) as unknown
 
-export async function searchClawHub(query: string, cursor?: string) {
-  const q = query.trim().slice(0, 200)
-  const body = q
-    ? await fetchJson('search', { q, limit: String(PAGE_SIZE), nonSuspiciousOnly: 'true' })
-    : await fetchJson('skills', {
-        limit: String(PAGE_SIZE),
-        sort: 'downloads',
-        nonSuspiciousOnly: 'true',
-        ...(cursor ? { cursor } : {})
-      })
-  const next = q ? null : record(body).nextCursor
+const fetchPopular = (cursor?: string) =>
+  fetchJson('skills', {
+    limit: String(PAGE_SIZE),
+    sort: 'downloads',
+    nonSuspiciousOnly: 'true',
+    ...(cursor ? { cursor } : {})
+  })
+
+function parsePopular(body: unknown): BrowsePage<ClawHubEntry> {
+  const next = record(body).nextCursor
   return { entries: parseClawHubEntries(body), nextCursor: typeof next === 'string' ? next : null }
+}
+
+// The list shown when the tab opens with nothing typed. It is remembered so the tab fills in at once.
+// Showing an older list is safe: installing always checks the skill with ClawHub again.
+const firstPage = createListCache({
+  path: () => join(app.getPath('userData'), 'listings', 'clawhub-first-page.json'),
+  fetchRaw: () => fetchPopular(),
+  parse: parsePopular,
+  worthKeeping: (page) => page.entries.length > 0,
+  maxAgeMs: FIRST_PAGE_MAX_AGE_MS
+})
+
+export const warmClawHub = () => firstPage.warm()
+
+// `fresh` skips the remembered list, for the refresh that follows showing it.
+export async function searchClawHub(query: string, cursor?: string, fresh = false): Promise<BrowsePage<ClawHubEntry>> {
+  const q = query.trim().slice(0, 200)
+  if (q) {
+    const body = await fetchJson('search', { q, limit: String(PAGE_SIZE), nonSuspiciousOnly: 'true' })
+    return { entries: parseClawHubEntries(body), nextCursor: null }
+  }
+  if (cursor) return parsePopular(await fetchPopular(cursor))
+  if (fresh) return firstPage.refresh()
+  const { value, stale } = await firstPage.read()
+  return { ...value, stale }
 }
 
 function refusalForScan(status: unknown) {

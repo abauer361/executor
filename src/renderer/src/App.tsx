@@ -8,6 +8,7 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { BuilderPage } from './pages/BuilderPage'
 import { CanvasPage } from './pages/canvas/CanvasPage'
 import { MarketplacePage } from './pages/MarketplacePage'
+import { preloadBrowsing } from './pages/useBrowse'
 import { useApp } from './store'
 
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
 
   useEffect(() => {
     void useApp.getState().hydrate()
+    preloadBrowsing()
   }, [])
 
   useEffect(() => {

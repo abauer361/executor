@@ -133,9 +133,10 @@ function runRequest(value: unknown): RunRequest {
 
 const none = (): [] => []
 const provider = (value: unknown) => oneOf(value, PROVIDERS, 'provider')
-const search = (args: unknown[]): [string, string | undefined] => [
+const search = (args: unknown[]): [string, string | undefined, boolean] => [
   text(args[0], 'search'),
-  optionalText(args[1], 'cursor')
+  optionalText(args[1], 'cursor'),
+  args[2] === true
 ]
 
 export const validators: { [C in IpcChannel]: (args: unknown[]) => IpcArgs<C> } = {

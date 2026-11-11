@@ -30,8 +30,9 @@ const request = (patch: Record<string, unknown> = {}, nodePatch: Record<string, 
 describe('IPC validation', () => {
   it('passes well-formed arguments through', () => {
     expect(check('key:save', 'openai', 'sk-test')).toEqual(['openai', 'sk-test'])
-    expect(check('registry:search', 'git')).toEqual(['git', undefined])
-    expect(check('registry:search', 'git', 'next')).toEqual(['git', 'next'])
+    expect(check('registry:search', 'git')).toEqual(['git', undefined, false])
+    expect(check('registry:search', 'git', 'next')).toEqual(['git', 'next', false])
+    expect(check('clawhub:search', '', undefined, true)).toEqual(['', undefined, true])
     expect(check('mcp:save-folders', 'filesystem', 'folders', ['/Users/me/code'])).toEqual([
       'filesystem',
       'folders',

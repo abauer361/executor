@@ -12,6 +12,7 @@ Electron + TypeScript + React desktop app for building and running multi-agent w
 | `src/main/{anthropic,openai,gemini}Client.ts` | One `ModelSession` implementation per provider |
 | `src/main/agentEnvironment.ts`, `mcp*.ts` | MCP server connections, skills and memory docs for a run |
 | `src/main/registry.ts`, `clawhub.ts` | Installing servers and skills from untrusted registries |
+| `src/main/listCache.ts` | Remembers each registry's opening list on disk so its Marketplace tab fills in at once |
 | `src/main/secrets.ts` | API keys, encrypted with `safeStorage` |
 | `src/preload/index.ts` | The only bridge to the renderer (`window.executor`) |
 | `src/shared/` | Types and pure logic used by both sides: `types.ts`, `ipc.ts` (the IPC contract), `persisted.ts` (saved-state shape), `pricing.ts`, `mcpServers.ts`, `registry.ts`, `skills.ts` |

@@ -191,6 +191,13 @@ export interface KeyResult {
   message?: string
 }
 
+// One page of a registry listing. `stale` marks a remembered page that is due a refresh.
+export interface BrowsePage<T> {
+  entries: T[]
+  nextCursor: string | null
+  stale?: boolean
+}
+
 // `backup` is set when the saved file could not be read and was moved aside.
 export interface LoadedState {
   json: string | null
@@ -218,11 +225,11 @@ export interface ExecutorBridge {
   saveMcpFolders(id: string, key: string, folders: string[]): Promise<void>
   saveMcpSecret(id: string, key: string, value: string): Promise<void>
   checkMcpServer(id: string): Promise<McpCheckResult>
-  searchRegistry(query: string, cursor?: string): Promise<{ entries: RegistryEntry[]; nextCursor: string | null }>
+  searchRegistry(query: string, cursor?: string, fresh?: boolean): Promise<BrowsePage<RegistryEntry>>
   installRegistryServer(name: string, version: string): Promise<InstalledRegistryServer>
   removeRegistryServer(id: string): Promise<void>
   getRegistryServers(): Promise<Record<string, InstalledRegistryServer>>
-  searchClawHub(query: string, cursor?: string): Promise<{ entries: ClawHubEntry[]; nextCursor: string | null }>
+  searchClawHub(query: string, cursor?: string, fresh?: boolean): Promise<BrowsePage<ClawHubEntry>>
   previewClawHubSkill(owner: string, slug: string): Promise<ClawHubPreview>
   installClawHubSkill(owner: string, slug: string, version: string, sha256: string): Promise<InstalledClawHubSkill>
   removeClawHubSkill(id: string): Promise<void>

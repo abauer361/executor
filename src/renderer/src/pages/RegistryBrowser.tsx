@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { RegistryEntry, RegistrySource } from '../../../shared/registry'
 import { bridge } from '../bridge'
 import { Icon, Kbd } from '../components/ui'
 import { useEscape } from '../components/useEscape'
 import { useApp } from '../store'
-
-const SEARCH_DELAY_MS = 300
+import { REGISTRY_SOURCE, useBrowse } from './useBrowse'
 
 const SOURCE_LABEL: Record<RegistrySource, string> = { remote: 'Remote', npm: 'npm', pypi: 'PyPI' }
 
@@ -156,48 +155,8 @@ function RegistryCard({ entry, onInstall }: { entry: RegistryEntry; onInstall(en
 }
 
 export function RegistryBrowser({ query }: { query: string }) {
-  const [entries, setEntries] = useState<RegistryEntry[]>([])
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { entries, cursor, loading, error, loadMore } = useBrowse(REGISTRY_SOURCE, query)
   const [installing, setInstalling] = useState<RegistryEntry | null>(null)
-
-  useEffect(() => {
-    let current = true
-    setLoading(true)
-    setError('')
-
-    const timer = setTimeout(() => {
-      bridge
-        .searchRegistry(query)
-        .then((page) => {
-          if (!current) return
-          setEntries(page.entries)
-          setCursor(page.nextCursor)
-        })
-        .catch(() => current && setError('The MCP registry could not be reached.'))
-        .finally(() => current && setLoading(false))
-    }, SEARCH_DELAY_MS)
-
-    return () => {
-      current = false
-      clearTimeout(timer)
-    }
-  }, [query])
-
-  const loadMore = async () => {
-    if (!cursor) return
-    setLoading(true)
-    try {
-      const page = await bridge.searchRegistry(query, cursor)
-      setEntries((previous) => [...previous, ...page.entries])
-      setCursor(page.nextCursor)
-    } catch {
-      setError('The MCP registry could not be reached.')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   return (
     <>

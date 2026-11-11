@@ -4,6 +4,7 @@ import type { Provider } from './pricing'
 import type { InstalledRegistryServer, RegistryEntry } from './registry'
 import type {
   ApprovalDecision,
+  BrowsePage,
   CatalogPackage,
   KeyResult,
   LoadedState,
@@ -34,17 +35,11 @@ export interface IpcContract {
   'mcp:save-folders': { args: [id: string, key: string, folders: string[]]; result: void }
   'mcp:save-secret': { args: [id: string, key: string, value: string]; result: void }
   'mcp:check': { args: [id: string]; result: McpCheckResult }
-  'registry:search': {
-    args: [query: string, cursor?: string]
-    result: { entries: RegistryEntry[]; nextCursor: string | null }
-  }
+  'registry:search': { args: [query: string, cursor?: string, fresh?: boolean]; result: BrowsePage<RegistryEntry> }
   'registry:install': { args: [name: string, version: string]; result: InstalledRegistryServer }
   'registry:remove': { args: [id: string]; result: void }
   'registry:servers': { args: []; result: Record<string, InstalledRegistryServer> }
-  'clawhub:search': {
-    args: [query: string, cursor?: string]
-    result: { entries: ClawHubEntry[]; nextCursor: string | null }
-  }
+  'clawhub:search': { args: [query: string, cursor?: string, fresh?: boolean]; result: BrowsePage<ClawHubEntry> }
   'clawhub:preview': { args: [owner: string, slug: string]; result: ClawHubPreview }
   'clawhub:install': {
     args: [owner: string, slug: string, version: string, sha256: string]

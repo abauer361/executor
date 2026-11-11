@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 import { rm, stat } from 'node:fs/promises'
 import { basename, join, sep } from 'node:path'
-import type { Provider } from '../shared/pricing'
-import type { ApprovalDecision, CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
+import { RUN_EVENT_CHANNEL, type IpcArgs, type IpcChannel, type IpcResult } from '../shared/ipc'
+import type { CatalogPackage, RunEvent } from '../shared/types'
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
 import { installClawHubSkill, installedClawHubSkills, previewClawHubSkill, removeClawHubSkill, searchClawHub } from './clawhub'
 import { createModelClient, verifyApiKey } from './modelClients'
@@ -46,108 +46,99 @@ function isWebUrl(url: string) {
   }
 }
 
-function registerIpc() {
-  ipcMain.handle('state:load', () => loadStateFile(statePath()))
+type Handler<C extends IpcChannel> = (
+  event: IpcMainInvokeEvent,
+  ...args: IpcArgs<C>
+) => IpcResult<C> | Promise<IpcResult<C>>
 
-  ipcMain.handle('state:save', (_event, json: string) => saveState(json))
+async function pickPaths(event: IpcMainInvokeEvent, options: OpenDialogOptions) {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  const result = await (window ? dialog.showOpenDialog(window, options) : dialog.showOpenDialog(options))
+  return result.canceled ? [] : result.filePaths
+}
 
-  ipcMain.handle('library:download', async (_event, pkg: CatalogPackage) => {
+// One entry per channel in the contract. A missing or mistyped handler does not compile.
+const handlers: { [C in IpcChannel]: Handler<C> } = {
+  'state:load': () => loadStateFile(statePath()),
+  'state:save': (_event, json) => saveState(json),
+
+  'library:download': async (_event, pkg) => {
     const path = packagePath(pkg)
     if (pkg.kind === 'skill') await downloadSkill(pkg.id)
     const manifest = { ...pkg, downloadedAt: new Date().toISOString() }
     await writeAtomic(path, JSON.stringify(manifest, null, 2))
     return path
-  })
-
-  ipcMain.handle('library:remove', async (_event, pkg: CatalogPackage) => {
+  },
+  'library:remove': async (_event, pkg) => {
     if (pkg.kind === 'skill') await removeSkill(pkg.id)
     await rm(packagePath(pkg), { force: true })
-  })
-
-  ipcMain.handle('library:reveal', (_event, path: string) => {
+  },
+  'library:reveal': (_event, path) => {
     if (!path.startsWith(libraryRoot() + sep)) throw new Error('Path is outside the library')
     shell.showItemInFolder(path)
-  })
+  },
 
-  ipcMain.handle('docs:pick', async (event): Promise<PickedDoc[]> => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    const options = { title: 'Attach memory docs', properties: ['openFile', 'multiSelections'] as const }
-    const result = await (window
-      ? dialog.showOpenDialog(window, { ...options, properties: [...options.properties] })
-      : dialog.showOpenDialog({ ...options, properties: [...options.properties] }))
-    if (result.canceled) return []
-    return Promise.all(
-      result.filePaths.map(async (path) => ({ name: basename(path), path, size: (await stat(path)).size }))
-    )
-  })
+  'docs:pick': async (event) => {
+    const paths = await pickPaths(event, { title: 'Attach memory docs', properties: ['openFile', 'multiSelections'] })
+    return Promise.all(paths.map(async (path) => ({ name: basename(path), path, size: (await stat(path)).size })))
+  },
 
-  ipcMain.handle('shell:open', async (_event, url: string) => {
+  'shell:open': async (_event, url) => {
     if (isWebUrl(url)) await shell.openExternal(url)
-  })
+  },
 
-  ipcMain.handle('key:status', () => apiKeyStatus())
-  ipcMain.handle('key:remove', (_event, provider: Provider) => removeApiKey(provider))
-  ipcMain.handle('key:save', async (_event, provider: Provider, key: string): Promise<KeyResult> => {
+  'key:status': () => apiKeyStatus(),
+  'key:remove': (_event, provider) => removeApiKey(provider),
+  'key:save': async (_event, provider, key) => {
     const result = await verifyApiKey(provider, key)
     if (result.ok) await saveApiKey(provider, key)
     return result
-  })
+  },
 
-  ipcMain.handle('run:start', async (event, request: RunRequest) => {
-    const { sender } = event
+  'run:start': async ({ sender }, request) => {
     const emit = (runEvent: RunEvent) => {
-      if (!sender.isDestroyed()) sender.send('run:event', runEvent)
+      if (!sender.isDestroyed()) sender.send(RUN_EVENT_CHANNEL, runEvent)
     }
     if (runs.has(request.runId)) throw new Error('That run has already started.')
     const client = createModelClient(await loadApiKeys())
     if (sender.isDestroyed()) return
     runs.add(sender.id, request.runId, launchRun(request, client, createAgentEnvironment(), emit))
-  })
+  },
+  'run:stop': (_event, runId) => runs.get(runId)?.stop(),
+  'run:inject': (_event, runId, nodeId, text) => runs.get(runId)?.inject(nodeId, text),
+  'run:approve': (_event, runId, approvalId, decision) => runs.get(runId)?.resolveApproval(approvalId, decision),
 
-  ipcMain.handle('run:stop', (_event, runId: string) => runs.get(runId)?.stop())
-  ipcMain.handle('run:inject', (_event, runId: string, nodeId: string, text: string) =>
-    runs.get(runId)?.inject(nodeId, text)
-  )
-  ipcMain.handle('run:approve', (_event, runId: string, approvalId: string, decision: ApprovalDecision) =>
-    runs.get(runId)?.resolveApproval(approvalId, decision)
-  )
-
-  ipcMain.handle('registry:search', (_event, query: string, cursor?: string) => searchRegistry(query, cursor))
-  ipcMain.handle('registry:servers', () => installedServers())
-  ipcMain.handle('registry:install', (_event, name: string, version: string) => installServer(name, version))
-  ipcMain.handle('registry:remove', async (_event, id: string) => {
+  'registry:search': (_event, query, cursor) => searchRegistry(query, cursor),
+  'registry:servers': () => installedServers(),
+  'registry:install': (_event, name, version) => installServer(name, version),
+  'registry:remove': async (_event, id) => {
     const server = (await installedServers())[id]
     if (server) await removeServerSecrets(server.spec)
     await removeServer(id)
-  })
+  },
 
-  ipcMain.handle('clawhub:search', (_event, query: string, cursor?: string) => searchClawHub(query, cursor))
-  ipcMain.handle('clawhub:skills', () => installedClawHubSkills())
-  ipcMain.handle('clawhub:preview', (_event, owner: string, slug: string) => previewClawHubSkill(owner, slug))
-  ipcMain.handle('clawhub:install', (_event, owner: string, slug: string, version: string, sha256: string) =>
-    installClawHubSkill(owner, slug, version, sha256)
-  )
-  ipcMain.handle('clawhub:remove', (_event, id: string) => removeClawHubSkill(id))
+  'clawhub:search': (_event, query, cursor) => searchClawHub(query, cursor),
+  'clawhub:skills': () => installedClawHubSkills(),
+  'clawhub:preview': (_event, owner, slug) => previewClawHubSkill(owner, slug),
+  'clawhub:install': (_event, owner, slug, version, sha256) => installClawHubSkill(owner, slug, version, sha256),
+  'clawhub:remove': (_event, id) => removeClawHubSkill(id),
 
-  ipcMain.handle('mcp:setups', () => allServerSetups())
-  ipcMain.handle('mcp:check', (_event, id: string) => checkServer(id))
-  ipcMain.handle('mcp:save-folders', (_event, id: string, key: string, folders: string[]) =>
-    saveFolders(id, key, folders)
-  )
-  ipcMain.handle('mcp:save-secret', (_event, id: string, key: string, value: string) =>
-    saveServerSecret(id, key, value)
-  )
-  ipcMain.handle('mcp:pick-folders', async (event, multiple: boolean) => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    const options = {
+  'mcp:setups': () => allServerSetups(),
+  'mcp:check': (_event, id) => checkServer(id),
+  'mcp:save-folders': (_event, id, key, folders) => saveFolders(id, key, folders),
+  'mcp:save-secret': (_event, id, key, value) => saveServerSecret(id, key, value),
+  'mcp:pick-folders': (event, multiple) =>
+    pickPaths(event, {
       title: 'Choose a folder',
-      properties: multiple ? (['openDirectory', 'multiSelections'] as const) : (['openDirectory'] as const)
-    }
-    const result = await (window
-      ? dialog.showOpenDialog(window, { ...options, properties: [...options.properties] })
-      : dialog.showOpenDialog({ ...options, properties: [...options.properties] }))
-    return result.canceled ? [] : result.filePaths
-  })
+      properties: multiple ? ['openDirectory', 'multiSelections'] : ['openDirectory']
+    })
+}
+
+function registerIpc() {
+  for (const channel of Object.keys(handlers) as IpcChannel[]) {
+    const handler = handlers[channel] as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+    ipcMain.handle(channel, handler)
+  }
 }
 
 function createWindow() {

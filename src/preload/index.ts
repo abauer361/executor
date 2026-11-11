@@ -1,40 +1,46 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { RUN_EVENT_CHANNEL, type IpcArgs, type IpcChannel, type IpcResult } from '../shared/ipc'
 import type { ExecutorBridge, RunEvent } from '../shared/types'
+
+const call =
+  <C extends IpcChannel>(channel: C) =>
+  (...args: IpcArgs<C>): Promise<IpcResult<C>> =>
+    ipcRenderer.invoke(channel, ...args)
 
 const bridge: ExecutorBridge = {
   platform: process.platform,
-  loadState: () => ipcRenderer.invoke('state:load'),
-  saveState: (json) => ipcRenderer.invoke('state:save', json),
-  downloadPackage: (pkg) => ipcRenderer.invoke('library:download', pkg),
-  removePackage: (pkg) => ipcRenderer.invoke('library:remove', pkg),
-  revealPath: (path) => ipcRenderer.invoke('library:reveal', path),
-  pickDocs: () => ipcRenderer.invoke('docs:pick'),
-  openExternal: (url) => ipcRenderer.invoke('shell:open', url),
-  apiKeyStatus: () => ipcRenderer.invoke('key:status'),
-  saveApiKey: (provider, key) => ipcRenderer.invoke('key:save', provider, key),
-  removeApiKey: (provider) => ipcRenderer.invoke('key:remove', provider),
-  startRun: (request) => ipcRenderer.invoke('run:start', request),
-  stopRun: (runId) => ipcRenderer.invoke('run:stop', runId),
-  injectInstruction: (runId, nodeId, text) => ipcRenderer.invoke('run:inject', runId, nodeId, text),
-  resolveApproval: (runId, approvalId, decision) => ipcRenderer.invoke('run:approve', runId, approvalId, decision),
-  getMcpSetups: () => ipcRenderer.invoke('mcp:setups'),
-  pickFolders: (multiple) => ipcRenderer.invoke('mcp:pick-folders', multiple),
-  saveMcpFolders: (id, key, folders) => ipcRenderer.invoke('mcp:save-folders', id, key, folders),
-  saveMcpSecret: (id, key, value) => ipcRenderer.invoke('mcp:save-secret', id, key, value),
-  checkMcpServer: (id) => ipcRenderer.invoke('mcp:check', id),
-  searchRegistry: (query, cursor) => ipcRenderer.invoke('registry:search', query, cursor),
-  installRegistryServer: (name, version) => ipcRenderer.invoke('registry:install', name, version),
-  removeRegistryServer: (id) => ipcRenderer.invoke('registry:remove', id),
-  getRegistryServers: () => ipcRenderer.invoke('registry:servers'),
-  searchClawHub: (query, cursor) => ipcRenderer.invoke('clawhub:search', query, cursor),
-  previewClawHubSkill: (owner, slug) => ipcRenderer.invoke('clawhub:preview', owner, slug),
-  installClawHubSkill: (owner, slug, version, sha256) => ipcRenderer.invoke('clawhub:install', owner, slug, version, sha256),
-  removeClawHubSkill: (id) => ipcRenderer.invoke('clawhub:remove', id),
-  getClawHubSkills: () => ipcRenderer.invoke('clawhub:skills'),
+  loadState: call('state:load'),
+  saveState: call('state:save'),
+  downloadPackage: call('library:download'),
+  removePackage: call('library:remove'),
+  revealPath: call('library:reveal'),
+  pickDocs: call('docs:pick'),
+  openExternal: call('shell:open'),
+  apiKeyStatus: call('key:status'),
+  saveApiKey: call('key:save'),
+  removeApiKey: call('key:remove'),
+  startRun: call('run:start'),
+  stopRun: call('run:stop'),
+  injectInstruction: call('run:inject'),
+  resolveApproval: call('run:approve'),
+  getMcpSetups: call('mcp:setups'),
+  pickFolders: call('mcp:pick-folders'),
+  saveMcpFolders: call('mcp:save-folders'),
+  saveMcpSecret: call('mcp:save-secret'),
+  checkMcpServer: call('mcp:check'),
+  searchRegistry: call('registry:search'),
+  installRegistryServer: call('registry:install'),
+  removeRegistryServer: call('registry:remove'),
+  getRegistryServers: call('registry:servers'),
+  searchClawHub: call('clawhub:search'),
+  previewClawHubSkill: call('clawhub:preview'),
+  installClawHubSkill: call('clawhub:install'),
+  removeClawHubSkill: call('clawhub:remove'),
+  getClawHubSkills: call('clawhub:skills'),
   onRunEvent: (listener) => {
     const handler = (_event: unknown, runEvent: RunEvent) => listener(runEvent)
-    ipcRenderer.on('run:event', handler)
-    return () => ipcRenderer.removeListener('run:event', handler)
+    ipcRenderer.on(RUN_EVENT_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(RUN_EVENT_CHANNEL, handler)
   }
 }
 

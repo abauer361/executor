@@ -7,18 +7,20 @@ Electron + TypeScript + React desktop app for building and running multi-agent w
 | Path | What lives there |
 |---|---|
 | `src/main/index.ts` | App lifecycle, window, IPC handlers |
+| `src/main/runRegistry.ts`, `stateFile.ts` | Live runs per window; reading and writing saved state |
 | `src/main/runEngine.ts` | Runs a workflow: scheduling, limits, tool loop, approvals. Provider-neutral |
 | `src/main/{anthropic,openai,gemini}Client.ts` | One `ModelSession` implementation per provider |
 | `src/main/agentEnvironment.ts`, `mcp*.ts` | MCP server connections, skills and memory docs for a run |
 | `src/main/registry.ts`, `clawhub.ts` | Installing servers and skills from untrusted registries |
 | `src/main/secrets.ts` | API keys, encrypted with `safeStorage` |
 | `src/preload/index.ts` | The only bridge to the renderer (`window.executor`) |
-| `src/shared/` | Types and pure logic used by both sides: `types.ts`, `pricing.ts`, `mcpServers.ts`, `registry.ts`, `skills.ts` |
+| `src/shared/` | Types and pure logic used by both sides: `types.ts`, `ipc.ts` (the IPC contract), `persisted.ts` (saved-state shape), `pricing.ts`, `mcpServers.ts`, `registry.ts`, `skills.ts` |
 | `src/renderer/src/store.ts` | The zustand store: all app state and actions |
 | `src/renderer/src/runState.ts` | Pure reducer that applies run events to a workflow |
+| `src/renderer/src/saveScheduler.ts`, `batcher.ts` | When state is saved; batching of streamed run events |
 | `src/renderer/src/pages/`, `components/` | UI |
 
-The renderer is sandboxed and talks to main only through `ExecutorBridge` in `src/shared/types.ts`. Changing an IPC call means touching that type, `src/preload/index.ts`, `src/main/index.ts` and the browser preview in `src/renderer/src/bridge.ts`.
+The renderer is sandboxed and talks to main only through `ExecutorBridge` (`src/shared/types.ts`). Every channel, with its arguments and result, is declared once in `src/shared/ipc.ts`; preload and main are typed from it. To add or change a call: edit the contract, then follow the compile errors through `ExecutorBridge`, `src/preload/index.ts`, the `handlers` map in `src/main/index.ts` and the browser preview in `src/renderer/src/bridge.ts`.
 
 ## Checks
 

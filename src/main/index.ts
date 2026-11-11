@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 import { rm, stat } from 'node:fs/promises'
-import { basename, join, sep } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import { RUN_EVENT_CHANNEL, type IpcArgs, type IpcChannel, type IpcResult } from '../shared/ipc'
 import type { CatalogPackage, RunEvent } from '../shared/types'
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
 import { installClawHubSkill, installedClawHubSkills, previewClawHubSkill, removeClawHubSkill, searchClawHub } from './clawhub'
+import { validators } from './ipcValidation'
 import { createModelClient, verifyApiKey } from './modelClients'
 import { allServerSetups, removeServerSecrets, saveFolders, saveServerSecret } from './mcpSetup'
 import { installedServers, installServer, removeServer, searchRegistry } from './registry'
@@ -74,8 +75,9 @@ const handlers: { [C in IpcChannel]: Handler<C> } = {
     await rm(packagePath(pkg), { force: true })
   },
   'library:reveal': (_event, path) => {
-    if (!path.startsWith(libraryRoot() + sep)) throw new Error('Path is outside the library')
-    shell.showItemInFolder(path)
+    const target = resolve(path)
+    if (!target.startsWith(libraryRoot() + sep)) throw new Error('Path is outside the library')
+    shell.showItemInFolder(target)
   },
 
   'docs:pick': async (event) => {
@@ -134,10 +136,15 @@ const handlers: { [C in IpcChannel]: Handler<C> } = {
     })
 }
 
+// Requests are served only to the app's own page, and only after their arguments pass validation.
 function registerIpc() {
   for (const channel of Object.keys(handlers) as IpcChannel[]) {
     const handler = handlers[channel] as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
-    ipcMain.handle(channel, handler)
+    const validate = validators[channel] as (args: unknown[]) => unknown[]
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (!event.senderFrame || event.senderFrame.parent !== null) throw new Error('Refused')
+      return handler(event, ...validate(args))
+    })
   }
 }
 

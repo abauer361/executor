@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { basename, dirname, join, sep } from 'node:path'
 import type { Provider } from '../shared/pricing'
 import type { ApprovalDecision, CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
@@ -17,6 +18,7 @@ const runs = createRunRegistry()
 
 // How long quitting waits for runs to stop their MCP servers.
 const QUIT_WAIT_MS = 5000
+const LAST_SAVE_GRACE_MS = 100
 
 const statePath = () => join(app.getPath('userData'), 'state.json')
 const libraryRoot = () => join(app.getPath('userData'), 'library')
@@ -30,9 +32,22 @@ function packagePath(pkg: Pick<CatalogPackage, 'id' | 'kind'>) {
 
 async function writeAtomic(path: string, text: string) {
   await mkdir(dirname(path), { recursive: true })
-  const temp = `${path}.tmp`
-  await writeFile(temp, text)
-  await rename(temp, path)
+  const temp = `${path}.${randomUUID().slice(0, 8)}.tmp`
+  try {
+    await writeFile(temp, text)
+    await rename(temp, path)
+  } catch (error) {
+    await rm(temp, { force: true })
+    throw error
+  }
+}
+
+// State saves run one at a time, so an older save can never land after a newer one.
+let stateWrites: Promise<void> = Promise.resolve()
+
+function saveState(json: string) {
+  stateWrites = stateWrites.catch(() => {}).then(() => writeAtomic(statePath(), json))
+  return stateWrites
 }
 
 function isWebUrl(url: string) {
@@ -53,7 +68,7 @@ function registerIpc() {
     }
   })
 
-  ipcMain.handle('state:save', (_event, json: string) => writeAtomic(statePath(), json))
+  ipcMain.handle('state:save', (_event, json: string) => saveState(json))
 
   ipcMain.handle('library:download', async (_event, pkg: CatalogPackage) => {
     const path = packagePath(pkg)
@@ -212,6 +227,16 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   quitting = true
   void runs.stopAll(QUIT_WAIT_MS).finally(() => app.quit())
+})
+
+let stateFlushed = false
+
+// A closing window sends its last save on the way out. Give it a moment to arrive, then let it finish.
+app.on('will-quit', (event) => {
+  if (stateFlushed) return
+  event.preventDefault()
+  stateFlushed = true
+  setTimeout(() => void stateWrites.catch(() => {}).finally(() => app.quit()), LAST_SAVE_GRACE_MS)
 })
 
 app.on('window-all-closed', () => {

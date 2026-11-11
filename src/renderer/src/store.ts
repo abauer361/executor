@@ -22,6 +22,7 @@ import { clawhubPackage, packageById, PREINSTALLED, registryPackage } from './da
 import { RETIRED_MODELS } from './data/models'
 import { createSeed } from './data/seed'
 import { buildRunRequest, prepareRun, reduceRunEvent, serverState } from './runState'
+import { createSaveScheduler } from './saveScheduler'
 import { appendLog, logEntry, sampleCost } from './usage'
 
 export type Page = 'canvas' | 'builder' | 'marketplace'
@@ -645,16 +646,20 @@ export const useApp = create<AppState>((set, get) => ({
   }
 }))
 
-let saveTimer: ReturnType<typeof setTimeout> | undefined
+const saves = createSaveScheduler(() => {
+  const { projects, agents, downloads, activeProjectId, theme } = useApp.getState()
+  void bridge.saveState(JSON.stringify({ projects, agents, downloads, activeProjectId, theme }))
+})
 
 useApp.subscribe((state, previous) => {
   if (!state.hydrated) return
   const keys: (keyof Persisted)[] = ['projects', 'agents', 'downloads', 'activeProjectId', 'theme']
   if (keys.every((key) => state[key] === previous[key])) return
-
-  clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const { projects, agents, downloads, activeProjectId, theme } = useApp.getState()
-    void bridge.saveState(JSON.stringify({ projects, agents, downloads, activeProjectId, theme }))
-  }, 400)
+  saves.request()
 })
+
+// Closing the window or quitting must not drop the last changes.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', saves.flush)
+  window.addEventListener('pagehide', saves.flush)
+}

@@ -171,6 +171,14 @@ describe('server definitions', () => {
     expect(git).toMatchObject({ args: expect.arrayContaining(['--repository', '/repo']) })
   })
 
+  it('pins every built-in server to one exact release', () => {
+    const pinned = /(@\d+\.\d+\.\d+|==\d+\.\d+\.\d+|@sha256:[0-9a-f]{64})$/
+    for (const spec of Object.values(MCP_SERVERS)) {
+      const target = spec.args.find((arg) => /mcp|modelcontextprotocol/.test(arg))
+      expect(target, spec.id).toMatch(pinned)
+    }
+  })
+
   it('passes secrets only through the environment', () => {
     const github = buildLaunch(MCP_SERVERS.github, {}, { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_x' }, '/data')
     expect(github).toMatchObject({ env: { GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp_x' } })
@@ -190,7 +198,7 @@ describe('server definitions', () => {
   })
 
   it('shows the install command for the marketplace', () => {
-    expect(installCommand('git')).toBe('uvx mcp-server-git --repository <folder>')
+    expect(installCommand('git')).toBe('uvx mcp-server-git==2026.11.4 --repository <folder>')
   })
 
   it('makes tool names unique across servers and valid for the API', () => {

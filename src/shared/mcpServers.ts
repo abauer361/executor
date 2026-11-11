@@ -24,41 +24,53 @@ export type McpLaunch =
   | { transport: 'http'; url: string; headers: Record<string, string> }
 
 // The only commands the app will run. The interface passes a server id, never a command.
+//
+// Every server is pinned to one exact release, so a launch never runs code published since it was
+// chosen. Versions were set on 2026-11-11 to releases at least a week old. To update one, read its
+// changelog, change the version here and check the server from Settings.
 export const MCP_SERVERS: Record<string, McpServerSpec> = {
   filesystem: {
     id: 'filesystem',
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-filesystem'],
+    args: ['-y', '@modelcontextprotocol/server-filesystem@2.2.0'],
     settings: [{ key: 'folders', label: 'Folders agents can access', kind: 'folders' }]
   },
   github: {
     id: 'github',
     command: 'docker',
-    args: ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server'],
+    args: [
+      'run',
+      '-i',
+      '--rm',
+      '-e',
+      'GITHUB_PERSONAL_ACCESS_TOKEN',
+      // v2.1.0, by digest so the tag cannot be moved to a different image.
+      'ghcr.io/github/github-mcp-server@sha256:f6056fc10bfffcc8c81a6417a2e9ca12808647e8dd6049642a4feaadee0e0f8a'
+    ],
     settings: [{ key: 'GITHUB_PERSONAL_ACCESS_TOKEN', label: 'GitHub access token', kind: 'secret' }]
   },
   git: {
     id: 'git',
     command: 'uvx',
-    args: ['mcp-server-git'],
+    args: ['mcp-server-git==2026.11.4'],
     settings: [{ key: 'repository', label: 'Repository folder', kind: 'folder', flag: '--repository' }]
   },
-  fetch: { id: 'fetch', command: 'uvx', args: ['mcp-server-fetch'], settings: [] },
+  fetch: { id: 'fetch', command: 'uvx', args: ['mcp-server-fetch==2026.11.4'], settings: [] },
   memory: {
     id: 'memory',
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-memory'],
+    args: ['-y', '@modelcontextprotocol/server-memory@2.1.0'],
     settings: [],
     dataFileEnv: { name: 'MEMORY_FILE_PATH', file: 'mcp-memory.jsonl' }
   },
   'sequential-thinking': {
     id: 'sequential-thinking',
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
+    args: ['-y', '@modelcontextprotocol/server-sequential-thinking@2.1.1'],
     settings: []
   },
-  time: { id: 'time', command: 'uvx', args: ['mcp-server-time'], settings: [] },
-  playwright: { id: 'playwright', command: 'npx', args: ['-y', '@playwright/mcp@latest'], settings: [] }
+  time: { id: 'time', command: 'uvx', args: ['mcp-server-time==2026.11.4'], settings: [] },
+  playwright: { id: 'playwright', command: 'npx', args: ['-y', '@playwright/mcp@0.0.84'], settings: [] }
 }
 
 export interface McpStoredSetup {

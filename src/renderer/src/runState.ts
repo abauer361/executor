@@ -5,6 +5,7 @@ import { hasCycle } from '../../shared/runGraph'
 import type {
   Agent,
   DownloadRecord,
+  Project,
   RunEvent,
   RunOutcome,
   RunRequest,
@@ -156,10 +157,14 @@ export function prepareRun(workflow: Workflow, goal: string, runId: string): Wor
   }
 }
 
+// Returns the same workflow when nothing would change, so nothing redraws.
 function patchNode(workflow: Workflow, nodeId: string, patch: Partial<WorkflowNode['data']>): Workflow {
+  const current = workflow.nodes.find((node) => node.id === nodeId)
+  const keys = Object.keys(patch) as (keyof WorkflowNode['data'])[]
+  if (!current || keys.every((key) => current.data[key] === patch[key])) return workflow
   return {
     ...workflow,
-    nodes: workflow.nodes.map((node) => (node.id === nodeId ? { ...node, data: { ...node.data, ...patch } } : node))
+    nodes: workflow.nodes.map((node) => (node === current ? { ...node, data: { ...node.data, ...patch } } : node))
   }
 }
 
@@ -186,12 +191,45 @@ function finishRun(workflow: Workflow, outcome: RunOutcome, message?: string): W
   }
 }
 
+// Applies events to the workflows of their runs. Projects and workflows an event does not change keep
+// their identity, so the parts of the interface showing them are left alone.
+export function reduceRunEvents(projects: Project[], events: RunEvent[]): Project[] {
+  return events.reduce(
+    (current, event) =>
+      mapChanged(current, (project) => {
+        const workflows = mapChanged(project.workflows, (workflow) =>
+          workflow.runId === event.runId ? reduceRunEvent(workflow, event) : workflow
+        )
+        return workflows === project.workflows ? project : { ...project, workflows }
+      }),
+    projects
+  )
+}
+
+function mapChanged<T>(items: T[], update: (item: T) => T): T[] {
+  let changed = false
+  const next = items.map((item) => {
+    const updated = update(item)
+    if (updated !== item) changed = true
+    return updated
+  })
+  return changed ? next : items
+}
+
 export function reduceRunEvent(workflow: Workflow, event: RunEvent): Workflow {
   switch (event.type) {
     case 'node':
       return patchNode(workflow, event.nodeId, { status: event.status, task: event.task })
     case 'usage':
       return patchNode(workflow, event.nodeId, { tokensUsed: event.tokens, costUsed: event.cost })
+    case 'progress': {
+      const output = workflow.nodes.find((node) => node.id === event.nodeId)?.data.output ?? ''
+      return patchNode(workflow, event.nodeId, {
+        tokensUsed: event.tokens,
+        costUsed: event.cost,
+        output: output + event.delta
+      })
+    }
     case 'model':
       return patchNode(workflow, event.nodeId, { routedModel: event.model })
     case 'output':

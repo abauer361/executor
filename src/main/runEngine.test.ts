@@ -214,6 +214,42 @@ describe('limits', () => {
   })
 })
 
+describe('streaming', () => {
+  const deltas = (events: RunEvent[]) =>
+    events.flatMap((event) => (event.type === 'progress' ? [event.delta] : [])).join('')
+  const lastOutput = (events: RunEvent[]) => events.findLast((event) => event.type === 'output')
+
+  it('sends only the new text while a reply streams, then the whole output', async () => {
+    const { client } = fakeClient()
+    const events = await run([node('a')], [], client)
+
+    expect(deltas(events)).toBe('partial')
+    expect(lastOutput(events)).toMatchObject({ text: 'output of A' })
+    expect(events.findLastIndex((event) => event.type === 'output')).toBeGreaterThan(
+      events.findLastIndex((event) => event.type === 'progress')
+    )
+  })
+
+  it('starts each later reply on its own paragraph', async () => {
+    const { tool } = fakeTool('read', false)
+    const { client } = fakeClient({
+      reply: ({ turn }) => (turn === 0 ? { text: 'first', toolUses: [toolUse('t1', 'read')] } : {})
+    })
+    const events = await run([node('a')], [], client, environment([tool]).value)
+
+    expect(deltas(events)).toBe('partial\n\npartial')
+    expect(lastOutput(events)).toMatchObject({ text: 'first\n\noutput of A' })
+  })
+
+  it('reports estimated usage with each piece of streamed text', async () => {
+    const { client } = fakeClient()
+    const events = await run([node('a')], [], client)
+    const progress = events.find((event) => event.type === 'progress')
+    // 100 counted input tokens, plus 7 streamed characters at 4 per token.
+    expect(progress).toMatchObject({ nodeId: 'a', tokens: 102 })
+  })
+})
+
 describe('usage', () => {
   it('reports billed usage instead of the live estimate', async () => {
     const { client } = fakeClient()

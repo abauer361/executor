@@ -133,10 +133,12 @@ export function FlowCanvas() {
     return () => clearTimeout(timer)
   }, [panels, fitView])
 
+  // Keyed on which agents are active, not on the nodes, so streaming output does not redraw every edge.
+  const activeIds = workflow.nodes.filter((node) => node.data.status === 'active').map((node) => node.id).join('\n')
   const edges = useMemo<FlowEdge[]>(() => {
-    const running = new Set(workflow.nodes.filter((node) => node.data.status === 'active').map((node) => node.id))
+    const running = new Set(activeIds.split('\n'))
     return workflow.edges.map((edge) => ({ ...edge, type: 'flow', data: { pulse: running.has(edge.source) } }))
-  }, [workflow.nodes, workflow.edges])
+  }, [activeIds, workflow.edges])
 
   const onDragOver = (event: DragEvent) => {
     if (!event.dataTransfer.types.includes(AGENT_DRAG_TYPE)) return

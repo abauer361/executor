@@ -22,7 +22,7 @@ import { bridge } from './bridge'
 import { clawhubPackage, packageById, PREINSTALLED, registryPackage } from './data/catalog'
 import { RETIRED_MODELS } from './data/models'
 import { createSeed } from './data/seed'
-import { buildRunRequest, prepareRun, reduceRunEvent, serverState } from './runState'
+import { buildRunRequest, prepareRun, reduceRunEvents, serverState } from './runState'
 import { createSaveScheduler } from './saveScheduler'
 import { appendLog, logEntry, sampleCost } from './usage'
 
@@ -81,7 +81,7 @@ interface AppState extends Persisted {
   autoLayout(): void
   beginRun(goal: string): void
   stopRun(): void
-  applyRunEvent(event: RunEvent): void
+  applyRunEvents(events: RunEvent[]): void
   answerApproval(approvalId: string, decision: ApprovalDecision): void
   inject(nodeId: string, text: string): void
   setNodeModel(nodeId: string, model: string): void
@@ -414,7 +414,7 @@ export const useApp = create<AppState>((set, get) => ({
     const request = buildRunRequest(activeWorkflow(state), state.agents, goal, runId)
     set({ runPanelOpen: false, ...withActiveWorkflow(state, (workflow) => prepareRun(workflow, goal, runId)) })
     bridge.startRun(request).catch((error: Error) => {
-      get().applyRunEvent({ type: 'end', runId, outcome: 'failed', message: error.message })
+      get().applyRunEvents([{ type: 'end', runId, outcome: 'failed', message: error.message }])
     })
   },
 
@@ -423,19 +423,20 @@ export const useApp = create<AppState>((set, get) => ({
     if (runId) void bridge.stopRun(runId)
   },
 
-  applyRunEvent: (event) =>
-    set((state) => ({
-      inspectorOpen:
-        state.inspectorOpen ||
-        (activeWorkflow(state).runId === event.runId &&
-          (event.type === 'approval' || (event.type === 'end' && event.outcome === 'completed'))),
-      projects: state.projects.map((project) => ({
-        ...project,
-        workflows: project.workflows.map((workflow) =>
-          workflow.runId === event.runId ? reduceRunEvent(workflow, event) : workflow
-        )
-      }))
-    })),
+  // Takes a batch so that a burst of streaming events costs one update.
+  applyRunEvents: (events) =>
+    set((state) => {
+      const activeRunId = activeWorkflow(state).runId
+      const needsAttention = events.some(
+        (event) =>
+          event.runId === activeRunId &&
+          (event.type === 'approval' || (event.type === 'end' && event.outcome === 'completed'))
+      )
+      const projects = reduceRunEvents(state.projects, events)
+      const inspectorOpen = state.inspectorOpen || needsAttention
+      if (projects === state.projects && inspectorOpen === state.inspectorOpen) return state
+      return { projects, inspectorOpen }
+    }),
 
   answerApproval(approvalId, decision) {
     const { runId } = activeWorkflow(get())

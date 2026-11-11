@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Agent, AgentStatus, Workflow, WorkflowNode } from '../../shared/types'
-import { buildRunRequest, prepareRun, reduceRunEvent, runProblems, runSpendCeiling, runWarnings, serverState } from './runState'
+import { buildRunRequest, prepareRun, reduceRunEvent, reduceRunEvents, runProblems, runSpendCeiling, runWarnings, serverState } from './runState'
 import { agentSummary, budgetShare, formatDollars, formatTokens, runnableModel, sampleCost, workflowStatus } from './usage'
 
 const agent = (patch: Partial<Agent> = {}): Agent => ({
@@ -131,6 +131,41 @@ describe('reduceRunEvent', () => {
     state = reduceRunEvent(state, { type: 'usage', runId: 'r', nodeId: 'a', tokens: 120, cost: 0.5 })
     state = reduceRunEvent(state, { type: 'output', runId: 'r', nodeId: 'a', text: 'Hello' })
     expect(state.nodes[0].data).toMatchObject({ status: 'active', task: 'Writing', tokensUsed: 120, costUsed: 0.5, output: 'Hello' })
+  })
+
+  it('appends streamed text and lets the whole output replace it', () => {
+    const progress = (delta: string, tokens: number) =>
+      ({ type: 'progress', runId: 'r', nodeId: 'a', tokens, cost: 0.1, delta }) as const
+    let state = reduceRunEvent(started, progress('Hel', 10))
+    state = reduceRunEvent(state, progress('lo', 20))
+    expect(state.nodes[0].data).toMatchObject({ output: 'Hello', tokensUsed: 20, costUsed: 0.1 })
+
+    state = reduceRunEvent(state, { type: 'output', runId: 'r', nodeId: 'a', text: 'Hello.' })
+    expect(state.nodes[0].data.output).toBe('Hello.')
+  })
+
+  it('leaves the workflow untouched when an event changes nothing', () => {
+    const event = { type: 'usage', runId: 'r', nodeId: 'a', tokens: 5, cost: 0 } as const
+    const once = reduceRunEvent(started, event)
+    expect(reduceRunEvent(once, event)).toBe(once)
+    expect(reduceRunEvent(once, { ...event, nodeId: 'gone' })).toBe(once)
+  })
+
+  it('only replaces the project and workflow a batch of events belongs to', () => {
+    const idle = workflow([node('x')])
+    const projects = [
+      { id: 'p1', name: 'One', tag: '', activeWorkflowId: 'w', workflows: [started, idle] },
+      { id: 'p2', name: 'Two', tag: '', activeWorkflowId: 'w', workflows: [idle] }
+    ]
+    const next = reduceRunEvents(projects, [
+      { type: 'progress', runId: 'r', nodeId: 'a', tokens: 10, cost: 0, delta: 'a' },
+      { type: 'progress', runId: 'r', nodeId: 'a', tokens: 20, cost: 0, delta: 'b' }
+    ])
+
+    expect(next[0].workflows[0].nodes[0].data).toMatchObject({ output: 'ab', tokensUsed: 20 })
+    expect(next[0].workflows[1]).toBe(idle)
+    expect(next[1]).toBe(projects[1])
+    expect(reduceRunEvents(projects, [{ type: 'log', runId: 'other', nodeId: null, agent: 'x', message: 'y' }])).toBe(projects)
   })
 
   it('selects the last agent when the run completes so its result is on screen', () => {

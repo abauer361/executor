@@ -176,7 +176,10 @@ export interface RunRequest {
 export type RunEvent =
   | { type: 'node'; runId: string; nodeId: string; status: AgentStatus; task: string }
   | { type: 'usage'; runId: string; nodeId: string; tokens: number; cost: number }
+  // Sent while a reply streams: the estimated usage so far, and only the text added since the last one.
+  | { type: 'progress'; runId: string; nodeId: string; tokens: number; cost: number; delta: string }
   | { type: 'model'; runId: string; nodeId: string; model: string }
+  // The whole output after each model call. It replaces whatever the progress events added up to.
   | { type: 'output'; runId: string; nodeId: string; text: string }
   | { type: 'log'; runId: string; nodeId: string | null; agent: string; message: string }
   | { type: 'approval'; runId: string; approval: PendingApproval }

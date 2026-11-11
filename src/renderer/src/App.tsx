@@ -1,4 +1,6 @@
 import { useEffect } from 'react'
+import type { RunEvent } from '../../shared/types'
+import { createBatcher } from './batcher'
 import { bridge } from './bridge'
 import { Header, Rail } from './components/Shell'
 import { ProjectSwitcher } from './components/ProjectSwitcher'
@@ -23,7 +25,14 @@ export function App() {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
-  useEffect(() => bridge.onRunEvent((event) => useApp.getState().applyRunEvent(event)), [])
+  useEffect(() => {
+    const batch = createBatcher<RunEvent>((events) => useApp.getState().applyRunEvents(events))
+    const unsubscribe = bridge.onRunEvent(batch.add)
+    return () => {
+      unsubscribe()
+      batch.flush()
+    }
+  }, [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

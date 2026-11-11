@@ -302,20 +302,23 @@ export function launchRun(
       }
 
       const maxTokens = Math.min(MAX_OUTPUT_TOKENS, allowance)
-      let text = ''
+      // Text not yet sent to the interface. A new reply starts on its own paragraph.
+      let unsent = ''
+      let started = false
       let streamedChars = 0
       let lastFlush = 0
 
       const flush = () => {
         const estimate = { inputTokens, outputTokens: Math.ceil(streamedChars / CHARS_PER_TOKEN) }
         emit({
-          type: 'usage',
+          type: 'progress',
           runId,
           nodeId: node.id,
           tokens: spent.tokens + usageTokens(estimate),
-          cost: spent.cost + usageCost(model, estimate)
+          cost: spent.cost + usageCost(model, estimate),
+          delta: unsent
         })
-        emit({ type: 'output', runId, nodeId: node.id, text: [...replies, text].filter(Boolean).join('\n\n') })
+        unsent = ''
       }
 
       const result = await session.turn(maxTokens, signal, (progress) => {
@@ -323,7 +326,10 @@ export function launchRun(
           setNode(node, 'active', progress.phase === 'thinking' ? 'Thinking' : 'Writing')
           return
         }
-        if (progress.type === 'text') text += progress.text
+        if (progress.type === 'text' && progress.text) {
+          unsent += !started && replies.length ? `\n\n${progress.text}` : progress.text
+          started = true
+        }
         streamedChars += progress.type === 'text' ? progress.text.length : progress.chars
         if (Date.now() - lastFlush >= PROGRESS_INTERVAL_MS) {
           lastFlush = Date.now()

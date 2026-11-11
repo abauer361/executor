@@ -220,6 +220,34 @@ h3 {
   text-underline-offset: 2px;
 }
 
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning-text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100vh;
+  padding: 32px;
+  text-align: center;
+}
+
+.load-error p {
+  max-width: 480px;
+  overflow-wrap: anywhere;
+}
+
 /* App shell */
 .app {
   display: grid;

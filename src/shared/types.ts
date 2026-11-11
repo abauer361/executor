@@ -188,9 +188,15 @@ export interface KeyResult {
   message?: string
 }
 
+// `backup` is set when the saved file could not be read and was moved aside.
+export interface LoadedState {
+  json: string | null
+  backup?: string
+}
+
 export interface ExecutorBridge {
   platform: string
-  loadState(): Promise<string | null>
+  loadState(): Promise<LoadedState>
   saveState(json: string): Promise<void>
   downloadPackage(pkg: CatalogPackage): Promise<string>
   removePackage(pkg: CatalogPackage): Promise<void>

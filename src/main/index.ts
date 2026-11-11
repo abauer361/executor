@@ -1,7 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
-import { basename, dirname, join, sep } from 'node:path'
+import { rm, stat } from 'node:fs/promises'
+import { basename, join, sep } from 'node:path'
 import type { Provider } from '../shared/pricing'
 import type { ApprovalDecision, CatalogPackage, KeyResult, PickedDoc, RunEvent, RunRequest } from '../shared/types'
 import { checkServer, createAgentEnvironment, downloadSkill, removeSkill } from './agentEnvironment'
@@ -12,6 +11,7 @@ import { installedServers, installServer, removeServer, searchRegistry } from '.
 import { launchRun } from './runEngine'
 import { createRunRegistry } from './runRegistry'
 import { apiKeyStatus, loadApiKeys, removeApiKey, saveApiKey } from './secrets'
+import { loadStateFile, writeAtomic } from './stateFile'
 
 const KINDS = new Set(['mcp', 'skill', 'agent', 'workflow'])
 const runs = createRunRegistry()
@@ -28,18 +28,6 @@ function packagePath(pkg: Pick<CatalogPackage, 'id' | 'kind'>) {
     throw new Error(`Invalid package: ${pkg.kind}/${pkg.id}`)
   }
   return join(libraryRoot(), pkg.kind, `${pkg.id}.json`)
-}
-
-async function writeAtomic(path: string, text: string) {
-  await mkdir(dirname(path), { recursive: true })
-  const temp = `${path}.${randomUUID().slice(0, 8)}.tmp`
-  try {
-    await writeFile(temp, text)
-    await rename(temp, path)
-  } catch (error) {
-    await rm(temp, { force: true })
-    throw error
-  }
 }
 
 // State saves run one at a time, so an older save can never land after a newer one.
@@ -59,14 +47,7 @@ function isWebUrl(url: string) {
 }
 
 function registerIpc() {
-  ipcMain.handle('state:load', async () => {
-    try {
-      return await readFile(statePath(), 'utf8')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-      throw error
-    }
-  })
+  ipcMain.handle('state:load', () => loadStateFile(statePath()))
 
   ipcMain.handle('state:save', (_event, json: string) => saveState(json))
 

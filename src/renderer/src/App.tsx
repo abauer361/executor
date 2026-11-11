@@ -12,6 +12,7 @@ export function App() {
   const hydrated = useApp((state) => state.hydrated)
   const page = useApp((state) => state.page)
   const theme = useApp((state) => state.theme)
+  const notice = useApp((state) => state.notice)
 
   useEffect(() => {
     void useApp.getState().hydrate()
@@ -48,6 +49,14 @@ export function App() {
       <Rail />
       <main className="main">
         <Header />
+        {notice && (
+          <div className="notice" role="alert">
+            <span className="grow">{notice}</span>
+            <button className="btn btn-ghost btn-mini" type="button" onClick={() => useApp.getState().dismissNotice()}>
+              Dismiss
+            </button>
+          </div>
+        )}
         {page === 'canvas' && <CanvasPage />}
         {page === 'builder' && <BuilderPage />}
         {page === 'marketplace' && <MarketplacePage />}

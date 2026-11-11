@@ -1,6 +1,7 @@
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type NodeChange } from '@xyflow/react'
 import { create } from 'zustand'
 import type { McpStoredSetup } from '../../shared/mcpServers'
+import { parsePersisted, STATE_VERSION, type Persisted, type Theme } from '../../shared/persisted'
 import type { Provider } from '../../shared/pricing'
 import type { ClawHubPreview, InstalledClawHubSkill } from '../../shared/clawhub'
 import type { InstalledRegistryServer, RegistryEntry } from '../../shared/registry'
@@ -27,23 +28,16 @@ import { appendLog, logEntry, sampleCost } from './usage'
 
 export type Page = 'canvas' | 'builder' | 'marketplace'
 export type BuilderSection = 'prompt' | 'mcp' | 'skills' | 'memory'
-export type Theme = 'dark' | 'light'
+export type { Theme }
 
 const NODE_WIDTH = 180
 const COLUMN_GAP = 64
 const ROW_GAP = 40
 const NODE_HEIGHT = 104
 
-interface Persisted {
-  projects: Project[]
-  agents: Agent[]
-  downloads: Record<string, DownloadRecord>
-  activeProjectId: string
-  theme: Theme
-}
-
 interface AppState extends Persisted {
   hydrated: boolean
+  notice: string | null
   apiKeys: Record<Provider, boolean>
   mcpSetups: Record<string, McpStoredSetup>
   mcpChecking: string[]
@@ -62,6 +56,7 @@ interface AppState extends Persisted {
   builderSection: BuilderSection | null
 
   hydrate(): Promise<void>
+  dismissNotice(): void
   setPage(page: Page): void
   setUi(patch: Partial<Pick<AppState, 'drawerTab' | 'drawerOpen' | 'inspectorOpen' | 'logsOpen' | 'switcherOpen' | 'settingsOpen' | 'runPanelOpen' | 'creatingWorkflow' | 'builderSection'>>): void
   setTheme(theme: Theme): void
@@ -227,6 +222,7 @@ function layeredPositions(workflow: Workflow) {
 
 export const useApp = create<AppState>((set, get) => ({
   hydrated: false,
+  notice: null,
   apiKeys: { anthropic: false, openai: false, google: false },
   mcpSetups: {},
   mcpChecking: [],
@@ -257,22 +253,25 @@ export const useApp = create<AppState>((set, get) => ({
       clawhubSkills: await bridge.getClawHubSkills().catch(() => ({}))
     })
     const saved = await bridge.loadState()
-    if (saved) {
-      try {
-        const state = JSON.parse(saved) as Persisted
-        set({
-          ...state,
-          agents: state.agents.map((agent) => ({ ...agent, models: [...new Set(agent.models.map(currentModel))] })),
-          projects: state.projects.map((project) => ({
-            ...project,
-            workflows: project.workflows.map(restoreWorkflow)
-          })),
-          hydrated: true
-        })
-        return
-      } catch (error) {
-        console.error('Saved state is unreadable, starting from sample data', error)
-      }
+    const state = saved.json === null ? null : parsePersisted(saved.json)
+    if (state) {
+      set({
+        projects: state.projects.map((project) => ({
+          ...project,
+          workflows: project.workflows.map(restoreWorkflow)
+        })),
+        agents: state.agents.map((agent) => ({ ...agent, models: [...new Set(agent.models.map(currentModel))] })),
+        downloads: state.downloads,
+        activeProjectId: state.activeProjectId,
+        theme: state.theme === 'light' ? 'light' : 'dark',
+        hydrated: true
+      })
+      return
+    }
+    if (saved.backup) {
+      set({
+        notice: `Your saved workspace could not be read, so Executor started fresh. The old file was kept at ${saved.backup}`
+      })
     }
 
     const downloads: Record<string, DownloadRecord> = {}
@@ -290,6 +289,8 @@ export const useApp = create<AppState>((set, get) => ({
     }
     set({ page })
   },
+
+  dismissNotice: () => set({ notice: null }),
 
   setUi: (patch) => set(patch),
   setTheme: (theme) => set({ theme }),
@@ -648,7 +649,7 @@ export const useApp = create<AppState>((set, get) => ({
 
 const saves = createSaveScheduler(() => {
   const { projects, agents, downloads, activeProjectId, theme } = useApp.getState()
-  void bridge.saveState(JSON.stringify({ projects, agents, downloads, activeProjectId, theme }))
+  void bridge.saveState(JSON.stringify({ version: STATE_VERSION, projects, agents, downloads, activeProjectId, theme }))
 })
 
 useApp.subscribe((state, previous) => {

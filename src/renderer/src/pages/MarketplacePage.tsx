@@ -31,9 +31,7 @@ const SECTIONS: { kind: PackageKind; label: string }[] = [
   { kind: 'workflow', label: 'Agent Workflows' }
 ]
 
-const USE_HINT: Record<PackageKind, string> = {
-  mcp: 'Add it to an agent in Agent Builder.',
-  skill: 'Add it to an agent in Agent Builder.',
+const USE_HINT: Partial<Record<PackageKind, string>> = {
   agent: 'Drag it from the canvas Agents tab.',
   workflow: 'Add it from the canvas Workflows tab.'
 }
@@ -176,7 +174,7 @@ function PackageCard({ pkg }: { pkg: CatalogPackage }) {
       </div>
       {error && <p className="mono package-error package-hint">{error}</p>}
       {!error && record && pkg.kind === 'mcp' && <ServerStatus pkg={pkg} />}
-      {!error && record && pkg.kind !== 'mcp' && <p className="mono faint package-hint">{USE_HINT[pkg.kind]}</p>}
+      {!error && record && USE_HINT[pkg.kind] && <p className="mono faint package-hint">{USE_HINT[pkg.kind]}</p>}
     </article>
   )
 }

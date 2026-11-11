@@ -1734,6 +1734,8 @@ h3 {
 .package-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  /* Every row takes the height of the tallest card, so cards match whether or not one shows a status line. */
+  grid-auto-rows: 1fr;
   gap: 16px;
 }
 

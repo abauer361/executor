@@ -201,12 +201,6 @@ export function RegistryBrowser({ query }: { query: string }) {
 
   return (
     <>
-      <p className="registry-note">
-        <Icon name="warning" size={16} />
-        This is the public MCP Registry. Anyone can publish here and nobody reviews what is listed, so check the source
-        before you install anything.
-      </p>
-
       {error && <p className="empty">{error}</p>}
       {!error && !loading && entries.length === 0 && <p className="empty">Nothing in the registry matches that search.</p>}
 

@@ -208,13 +208,6 @@ export function ClawHubBrowser({ query }: { query: string }) {
 
   return (
     <>
-      <p className="registry-note">
-        <Icon name="warning" size={16} />
-        ClawHub is an open skill registry, and hundreds of malicious skills were found there in 2026. Executor lists
-        only skills that ClawHub's scans mark clean, installs one exact version, and never runs a skill's scripts. Read
-        the full text before you install anything.
-      </p>
-
       {error && <p className="empty">{error}</p>}
       {!error && !loading && entries.length === 0 && <p className="empty">Nothing on ClawHub matches that search.</p>}
 

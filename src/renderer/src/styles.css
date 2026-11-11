@@ -1941,23 +1941,6 @@ button.badge {
 }
 
 /* MCP registry */
-.registry-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--warning) 7%, transparent);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.registry-note .material-symbols-outlined {
-  color: var(--warning-text);
-}
-
 .registry-more {
   display: flex;
   justify-content: center;

@@ -12,6 +12,7 @@ import type { AgentContext, AgentEnvironment, AgentTool } from './runEngine'
 import { shellPath } from './shellPath'
 
 const MAX_DOCUMENT_BYTES = 500_000
+const DOWNLOAD_TIMEOUT_MS = 15_000
 
 const skillPath = (id: string) => join(app.getPath('userData'), 'library', 'skill', id, 'SKILL.md')
 
@@ -30,7 +31,7 @@ async function pinnedSkill(id: string) {
 
 export async function downloadSkill(id: string) {
   const skill = await pinnedSkill(id)
-  const response = await fetch(skill.url)
+  const response = await fetch(skill.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
   if (!response.ok) throw new Error(`Could not download ${skill.name}: ${response.status}`)
   const bytes = new Uint8Array(await response.arrayBuffer())
   const text = await checkSkillFile(skill, bytes)

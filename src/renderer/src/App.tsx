@@ -13,6 +13,7 @@ export function App() {
   const page = useApp((state) => state.page)
   const theme = useApp((state) => state.theme)
   const notice = useApp((state) => state.notice)
+  const loadError = useApp((state) => state.loadError)
 
   useEffect(() => {
     void useApp.getState().hydrate()
@@ -42,6 +43,17 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  if (loadError) {
+    return (
+      <div className="load-error" role="alert">
+        <span className="strong">Executor could not load your workspace</span>
+        <p className="mono muted">{loadError}</p>
+        <button className="btn btn-primary" type="button" onClick={() => void useApp.getState().hydrate()}>
+          Try Again
+        </button>
+      </div>
+    )
+  }
   if (!hydrated) return null
 
   return (

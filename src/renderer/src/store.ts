@@ -38,6 +38,7 @@ const NODE_HEIGHT = 104
 interface AppState extends Persisted {
   hydrated: boolean
   notice: string | null
+  loadError: string | null
   apiKeys: Record<Provider, boolean>
   mcpSetups: Record<string, McpStoredSetup>
   mcpChecking: string[]
@@ -223,6 +224,7 @@ function layeredPositions(workflow: Workflow) {
 export const useApp = create<AppState>((set, get) => ({
   hydrated: false,
   notice: null,
+  loadError: null,
   apiKeys: { anthropic: false, openai: false, google: false },
   mcpSetups: {},
   mcpChecking: [],
@@ -246,40 +248,12 @@ export const useApp = create<AppState>((set, get) => ({
   builderSection: null,
 
   async hydrate() {
-    set({
-      apiKeys: await bridge.apiKeyStatus().catch(() => get().apiKeys),
-      mcpSetups: await bridge.getMcpSetups().catch(() => ({})),
-      registryServers: await bridge.getRegistryServers().catch(() => ({})),
-      clawhubSkills: await bridge.getClawHubSkills().catch(() => ({}))
-    })
-    const saved = await bridge.loadState()
-    const state = saved.json === null ? null : parsePersisted(saved.json)
-    if (state) {
-      set({
-        projects: state.projects.map((project) => ({
-          ...project,
-          workflows: project.workflows.map(restoreWorkflow)
-        })),
-        agents: state.agents.map((agent) => ({ ...agent, models: [...new Set(agent.models.map(currentModel))] })),
-        downloads: state.downloads,
-        activeProjectId: state.activeProjectId,
-        theme: state.theme === 'light' ? 'light' : 'dark',
-        hydrated: true
-      })
-      return
+    set({ loadError: null })
+    try {
+      await loadWorkspace()
+    } catch (error) {
+      set({ loadError: error instanceof Error ? error.message : String(error) })
     }
-    if (saved.backup) {
-      set({
-        notice: `Your saved workspace could not be read, so Executor started fresh. The old file was kept at ${saved.backup}`
-      })
-    }
-
-    const downloads: Record<string, DownloadRecord> = {}
-    for (const id of PREINSTALLED) {
-      const pkg = packageById(id)
-      if (pkg) downloads[id] = { packageId: id, path: await bridge.downloadPackage(pkg), downloadedAt: Date.now() }
-    }
-    set({ ...createSeed(), downloads, hydrated: true })
   },
 
   setPage(page) {
@@ -646,6 +620,54 @@ export const useApp = create<AppState>((set, get) => ({
     }))
   }
 }))
+
+// Reads everything the app needs to draw its first screen.
+async function loadWorkspace() {
+  const { setState: set } = useApp
+  set({
+    apiKeys: await bridge.apiKeyStatus().catch(() => useApp.getState().apiKeys),
+    mcpSetups: await bridge.getMcpSetups().catch(() => ({})),
+    registryServers: await bridge.getRegistryServers().catch(() => ({})),
+    clawhubSkills: await bridge.getClawHubSkills().catch(() => ({}))
+  })
+  const saved = await bridge.loadState()
+  const state = saved.json === null ? null : parsePersisted(saved.json)
+  if (state) {
+    set({
+      projects: state.projects.map((project) => ({
+        ...project,
+        workflows: project.workflows.map(restoreWorkflow)
+      })),
+      agents: state.agents.map((agent) => ({ ...agent, models: [...new Set(agent.models.map(currentModel))] })),
+      downloads: state.downloads,
+      activeProjectId: state.activeProjectId,
+      theme: state.theme === 'light' ? 'light' : 'dark',
+      hydrated: true
+    })
+    return
+  }
+  if (saved.backup) {
+    set({
+      notice: `Your saved workspace could not be read, so Executor started fresh. The old file was kept at ${saved.backup}`
+    })
+  }
+
+  // Preinstalled packages are a convenience. One that cannot be fetched, such as a skill while
+  // offline, is left for the Marketplace instead of holding up the first launch.
+  const downloads: Record<string, DownloadRecord> = {}
+  await Promise.all(
+    PREINSTALLED.map(async (id) => {
+      const pkg = packageById(id)
+      if (!pkg) return
+      try {
+        downloads[id] = { packageId: id, path: await bridge.downloadPackage(pkg), downloadedAt: Date.now() }
+      } catch {
+        // Not downloaded.
+      }
+    })
+  )
+  set({ ...createSeed(), downloads, hydrated: true })
+}
 
 const saves = createSaveScheduler(() => {
   const { projects, agents, downloads, activeProjectId, theme } = useApp.getState()

@@ -6,6 +6,24 @@ Audited 2026-11-11 at commit `d611470`. Nothing in the repo was changed; this fi
 
 **Fields:** Effort S (under an hour) / M (a few hours) / L (a day or more). Risk is the chance the fix itself breaks something. Within each area, findings are sorted by impact divided by effort.
 
+## Status
+
+Done on branch `audit-top-5` (2026-11-11), one commit each:
+
+| ID | Commit subject |
+|---|---|
+| `V1` | Add check scripts and CLAUDE.md for cheaper verification |
+| `R1` | Stop runs when their window goes away, and wait for cleanup on quit |
+| `R2` | Save during runs and flush the last save on close |
+| `R3` | Move unreadable saved state aside instead of overwriting it |
+| `R4` | Show an error instead of a blank window when loading fails |
+| `P1` | Stream text as deltas and batch run updates in the interface |
+| `Q1` | Declare the IPC contract once and type preload and main from it |
+| `S1` | Validate every IPC argument in main before a handler runs |
+| `S3` | Pin the built-in MCP servers to exact releases |
+
+Also covered along the way: the temp-file collision and state-write ordering from `R6` (state file only), the folder-as-flag part of `S2` (folders must be absolute paths), and the duplicated dialog code from `Q2`. Everything else below is still open, and the measurements describe the code before these changes.
+
 ## Summary
 
 The codebase is in better shape than most at this stage: strict TypeScript with no `any`, a sandboxed renderer, keys in `safeStorage`, untrusted registry data validated before it becomes a command, and 174 behavior-named tests that run in under a second. Most of the real problems are at the edges of a run:
